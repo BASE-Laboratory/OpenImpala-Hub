@@ -1,0 +1,121 @@
+{
+    "basecoat_axes_by_level": {
+        "0": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.0,
+                "scale": 1.6,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.0,
+                "scale": 1.6,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.0,
+                "scale": 1.6,
+                "unit": "um"
+            }
+        ],
+        "1": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.8,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.8,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.8,
+                "scale": 3.2,
+                "unit": "um"
+            }
+        ]
+    },
+    "basecoat_centering": "cell",
+    "basecoat_provenance": {
+        "basecoat_version": "0.3.0",
+        "beamline": "DLS_I12",
+        "clamping_kpa": 238.0,
+        "data_origin": "benchmark_xct",
+        "git_sha": "438405c05580",
+        "label": "0.028 mV/V (238 kPa)",
+        "sample": "virgin_carbon_felt",
+        "written_at_utc": "2026-11-25T20:44:13.774365+00:00"
+    },
+    "multiscales": [
+        {
+            "axes": [
+                {
+                    "name": "z",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "y",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "x",
+                    "type": "space",
+                    "unit": "micrometer"
+                }
+            ],
+            "datasets": [
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                1.6,
+                                1.6,
+                                1.6
+                            ],
+                            "type": "scale"
+                        }
+                    ],
+                    "path": "0"
+                },
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                3.2,
+                                3.2,
+                                3.2
+                            ],
+                            "type": "scale"
+                        },
+                        {
+                            "translation": [
+                                0.8,
+                                0.8,
+                                0.8
+                            ],
+                            "type": "translation"
+                        }
+                    ],
+                    "path": "1"
+                }
+            ],
+            "name": "dls_i12_238kpa",
+            "type": "block_mean",
+            "version": "0.4"
+        }
+    ]
+}

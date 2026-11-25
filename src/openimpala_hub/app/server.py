@@ -183,7 +183,7 @@ def _register_api_routes(server: Flask, registry: RunRegistry) -> None:
 def create_dash_app(
     *,
     warm_start: bool = True,
-    warm_shape: tuple[int, int, int] = (48, 48, 48),
+    warm_shape: tuple[int, int, int] = (96, 96, 96),
 ) -> Dash:
     """Create and configure the Plotly Dash application and its underlying Flask server."""
     registry = RunRegistry(maxsize=48)

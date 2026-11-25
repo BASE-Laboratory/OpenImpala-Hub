@@ -1,12 +1,15 @@
-"""Operando 4D dataset discovery, deterministic 5-timepoint demo builder, and PorousDiff staging.
+"""Discovery of real synchrotron & micro-CT 4D/3D datasets (plus synthetic unit-test fixture).
 
-Provides zero-setup access to:
-1. Full experimental `Ag05` / `Cu04` multi-GB TIFF + CSV folders when mounted under
-   `$OPENIMPALA_HUB_OPERANDO_DIR` or `<repo>/data/operando/`.
-2. A deterministic, physically structured 5-timepoint `uint16` operando plating/stripping
-   stack (`0h`, `7.5h`, `15h`, `20h`, `20.25h` multi-page `.tif` files + `cycling.csv`)
-   staged once on disk so `load_lazy_slice`, `load_chunked_volume`, `fit_reference_circle`,
-   `dataset_structural_metrics`, and native `step=1` ROI simulations work out of the box.
+Priority order in `discover_operando_datasets()`:
+1. Externally mounted full-size multi-GB `Ag05` / `Cu04` operando TIFF stacks (`$OPENIMPALA_HUB_OPERANDO_DIR`).
+2. Real committed OME-Zarr v0.4 datasets in `<repo>/docs_site/data/`:
+   - `dls_i12_felt`: Diamond Light Source `I12` Virgin Carbon Felt in-situ compression series
+     (`68`, `238`, `451 kPa`, `128 x 192 x 192` at `1.6 um/px`).
+   - `dls_i13_zn13x`: Diamond Light Source `I13-2` Zeolite 13X capillary + 500 um ruby fiducial
+     (`48 x 400 x 400` at `3.25 um/px`, Green et al., Scientific Data 12, 329 (2025)).
+   - `nlm25_xct`: Segmented dendritic / porous micro-CT (`128 x 256 x 256` at `2.0 um/px`).
+3. Canonical `OpenImpala` `100^3` two-phase porous medium (`SampleData_2Phase_stack_3d_1bit.tif`).
+4. Synthetic `ensure_operando_demo_staged()` fallback ONLY when none of the real stores exist on disk.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from pathlib import Path
 import tempfile
 
 import numpy as np
+import openimpala as oi
 import tifffile as tiff
 
 from .chunked_io import OperandoDataset, Timepoint
@@ -47,6 +51,14 @@ def _operando_search_roots() -> list[Path]:
     return roots
 
 
+def _bundled_zarr_dir() -> Path:
+    env_zarr = os.environ.get("OPENIMPALA_HUB_ZARR_DATA_DIR")
+    if env_zarr:
+        return Path(env_zarr).expanduser().resolve()
+    repo_root = Path(__file__).resolve().parents[3]
+    return repo_root / "docs_site" / "data"
+
+
 def _demo_cache_dir() -> Path:
     env_cache = os.environ.get("OPENIMPALA_HUB_DEMO_CACHE")
     if env_cache:
@@ -55,7 +67,7 @@ def _demo_cache_dir() -> Path:
 
 
 def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDataset:
-    """Build (if not already present) and return the 5-timepoint `uint16` Ag05 demo dataset."""
+    """Build (if not already present) and return the deterministic 5-timepoint `uint16` test fixture."""
     root = (cache_dir or _demo_cache_dir()) / "ag_demo"
     root.mkdir(parents=True, exist_ok=True)
     csv_path = root / "Ag_cell_operando_cycling.csv"
@@ -63,7 +75,6 @@ def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDatase
     nz, ny, nx = 64, 160, 160
     cx, cy, rad = 80.0, 80.0, 66.0
 
-    # Check if all 5 TIFFs + CSV already exist
     expected_tifs = [root / fname for _, _, fname in AG_REAL_FILES]
     if not (csv_path.is_file() and all(p.is_file() for p in expected_tifs)):
         rng = np.random.default_rng(2026)
@@ -77,38 +88,43 @@ def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDatase
             0.0,
         )
 
-        # Static granular electrode texture + intrinsic ~26% inter-particle pore network
         coarse = rng.normal(0.0, 1.0, size=(nz, ny // 2, nx // 2)).astype(np.float32)
         tex = np.repeat(np.repeat(coarse, 2, axis=1), 2, axis=2)
         fine = rng.normal(0.0, 420.0, size=(nz, ny, nx)).astype(np.float32)
         intrinsic_pores = tex < -0.68
 
         base_stack = np.zeros((nz, ny, nx), dtype=np.float32)
-        for z in range(3, nz):  # z=0..2 are zero registration-padding planes
+        for z in range(3, nz):
             plane = np.where(in_disc, 25000.0 + 1350.0 * tex[z] + fine[z] + rim_boost, 0.0)
             plane = np.where(in_disc & intrinsic_pores[z], plane * 0.44, plane)
-            # Low nonzero air scatter outside sample so air-ring median is ~800 counts
             plane = np.where(in_air_ring, 820.0 + np.abs(fine[z]) * 0.25, plane)
             base_stack[z] = plane
 
-        # Timepoint-dependent plating/void evolution around interface z = 50
-        # Tuple: (interface_drop_counts, crack_severity)
         states = [
-            (0.0, 0.0),      # 0.0h pristine
-            (3600.0, 1.0),   # 7.5h after 1st plating (strong darkening + crack/Li channel)
-            (1100.0, 0.38),  # 15.0h after 1st stripping (partial recovery, residual void)
-            (4300.0, 1.25),  # 20.0h after 2nd plating (deeper plating + wider crack)
-            (1650.0, 0.55),  # 20.25h after 2nd stripping (accumulated dead Li + void)
+            (0.0, 0.0),
+            (3600.0, 1.0),
+            (1100.0, 0.38),
+            (4300.0, 1.25),
+            (1650.0, 0.55),
         ]
 
-        # Precompute branching defect geometry inside ROI [88:136, 56:104, 38:62]
         zz = np.arange(nz, dtype=np.float32)[:, None, None]
         z_prof = np.exp(-0.5 * ((zz - 50.0) / 4.2) ** 2)
-        crack_curve_1 = np.abs((yy[None] - 80.0) - 0.34 * (xx[None] - 112.0) - 4.0 * np.sin(xx[None] * 0.14))
-        crack_curve_2 = np.abs((yy[None] - 83.0) + 0.48 * (xx[None] - 115.0) - 3.0 * np.cos(yy[None] * 0.16))
-        roi_gate = (xx[None] > 86) & (xx[None] < 138) & (yy[None] > 54) & (yy[None] < 106) & (np.abs(zz - 50.0) <= 10.0)
+        crack_curve_1 = np.abs(
+            (yy[None] - 80.0) - 0.34 * (xx[None] - 112.0) - 4.0 * np.sin(xx[None] * 0.14)
+        )
+        crack_curve_2 = np.abs(
+            (yy[None] - 83.0) + 0.48 * (xx[None] - 115.0) - 3.0 * np.cos(xx[None] * 0.16)
+        )
+        roi_gate = (
+            (xx[None] > 86)
+            & (xx[None] < 138)
+            & (yy[None] > 54)
+            & (yy[None] < 106)
+            & (np.abs(zz - 50.0) <= 10.0)
+        )
 
-        for (t_h, _lbl, fname), (drop_c, sev) in zip(AG_REAL_FILES, states, strict=True):
+        for (_t_h, _lbl, fname), (drop_c, sev) in zip(AG_REAL_FILES, states, strict=True):
             st = base_stack.copy()
             if drop_c > 0.0:
                 interior_3d = (rr < 0.90 * rad)[None, :, :] & (zz >= 3)
@@ -121,7 +137,6 @@ def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDatase
             st_u16 = np.clip(np.round(st), 0, 65535).astype(np.uint16)
             tiff.imwrite(root / fname, st_u16, photometric="minisblack")
 
-        # Write realistic galvanostatic cycling CSV (0 -> 20.5 h)
         t_vec = np.linspace(0.0, 20.5, 410)
         v_vec = np.zeros_like(t_vec)
         i_vec = np.zeros_like(t_vec)
@@ -144,12 +159,11 @@ def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDatase
         csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     tps = tuple(
-        Timepoint(label=lbl, path=root / fname, t_h=t_h)
-        for t_h, lbl, fname in AG_REAL_FILES
+        Timepoint(label=lbl, path=root / fname, t_h=t_h) for t_h, lbl, fname in AG_REAL_FILES
     )
     return OperandoDataset(
         key="ag_demo",
-        label="Silver interlayer cell (Ag05 · 5 timepoints)",
+        label="Synthetic Ag05 verification phantom",
         voxel_size_um=1.6,
         echem_csv=csv_path,
         timepoints=tps,
@@ -157,9 +171,10 @@ def ensure_operando_demo_staged(cache_dir: Path | None = None) -> OperandoDatase
 
 
 def discover_operando_datasets() -> dict[str, OperandoDataset]:
-    """Return available 4D operando datasets (real mounted stacks + staged Ag05 demo)."""
+    """Return available real 4D/3D synchrotron & micro-CT datasets (mounted + bundled OME-Zarr)."""
     found: dict[str, OperandoDataset] = {}
 
+    # 1. Mounted full-size Ag05 / Cu04 multi-GB operando TIFF folders (if present)
     for root in _operando_search_roots():
         ag_dir = root / "ag_cell"
         if ag_dir.is_dir():
@@ -194,6 +209,60 @@ def discover_operando_datasets() -> dict[str, OperandoDataset]:
                     timepoints=tuple(tps_cu),
                 )
 
-    demo = ensure_operando_demo_staged()
-    found[demo.key] = demo
+    # 2. Real bundled synchrotron & micro-CT OME-Zarr v0.4 datasets in docs_site/data/
+    zdir = _bundled_zarr_dir()
+    i12_stores = [
+        (0.5, "68 kPa (0.008 mV/V)", zdir / "dls_i12_068kpa.ome.zarr"),
+        (1.5, "238 kPa (0.028 mV/V)", zdir / "dls_i12_238kpa.ome.zarr"),
+        (2.5, "451 kPa (0.053 mV/V)", zdir / "dls_i12_451kpa.ome.zarr"),
+    ]
+    i12_csv = zdir / "dls_i12_compression.csv"
+    if i12_csv.is_file() and all(p.is_dir() for _, _, p in i12_stores):
+        found["dls_i12_felt"] = OperandoDataset(
+            key="dls_i12_felt",
+            label="DLS I12 Virgin Carbon Felt · Compression (68–451 kPa, 1.6 µm)",
+            voxel_size_um=1.6,
+            echem_csv=i12_csv,
+            timepoints=tuple(Timepoint(label=lbl, path=p, t_h=th) for th, lbl, p in i12_stores),
+        )
+
+    i13_store = zdir / "dls_i13_zn13x_capillary.ome.zarr"
+    i13_csv = zdir / "dls_i13_zn13x.csv"
+    if i13_store.is_dir() and i13_csv.is_file():
+        found["dls_i13_zn13x"] = OperandoDataset(
+            key="dls_i13_zn13x",
+            label="DLS I13-2 Zeolite 13X Capillary + Ruby Sphere (3.25 µm)",
+            voxel_size_um=3.25,
+            echem_csv=i13_csv,
+            timepoints=(Timepoint(label="Scan 169067 (1.625->3.25 µm)", path=i13_store, t_h=0.5),),
+        )
+
+    nlm_store = zdir / "nlm25_dendritic_xct.ome.zarr"
+    nlm_csv = zdir / "nlm25_trace.csv"
+    if nlm_store.is_dir() and nlm_csv.is_file():
+        found["nlm25_xct"] = OperandoDataset(
+            key="nlm25_xct",
+            label="Dendritic / Porous Electrode Micro-CT (nlm25, 2.0 µm)",
+            voxel_size_um=2.0,
+            echem_csv=nlm_csv,
+            timepoints=(Timepoint(label="Slices 850–977 (256x256 crop)", path=nlm_store, t_h=0.5),),
+        )
+
+    # 3. Canonical OpenImpala 100^3 two-phase stack if cached locally
+    try:
+        oi_tif = oi.datasets.fetch_path("SampleData_2Phase_stack_3d_1bit.tif")
+        if oi_tif.is_file() and nlm_csv.is_file():
+            found["oi_2phase"] = OperandoDataset(
+                key="oi_2phase",
+                label="OpenImpala Two-Phase Porous Medium (100³, 1.0 µm)",
+                voxel_size_um=1.0,
+                echem_csv=nlm_csv,
+                timepoints=(Timepoint(label="100x100x100 binary stack", path=oi_tif, t_h=0.5),),
+            )
+    except Exception:
+        pass
+
+    if not found:
+        demo = ensure_operando_demo_staged()
+        found[demo.key] = demo
     return found

@@ -340,7 +340,12 @@ def _build_plain_results_rows(run: ExecutedRun) -> list[html.Tr]:
     tau_str = f"{tz.tortuosity:.3f}" if (tz and tz.tortuosity is not None) else "Blocked"
     deff_val = tz.effective_diffusivity if tz else 0.0
     deff_str = f"{deff_val * 100:.1f}% ({deff_val:.4f})"
-    sig_str = f"{s.solid_effective_conductivity_z:.4f}" if s.solid_effective_conductivity_z > 0 else "N/A (all pore)"
+    if s.solid_effective_conductivity_z > 0:
+        sig_str = f"{s.solid_effective_conductivity_z:.4f}"
+    elif s.porosity >= 0.999:
+        sig_str = "N/A (all pore)"
+    else:
+        sig_str = "0.0000 (no Z bridge)"
 
     e_gpa = mech.get("effective_modulus_gpa")
     if e_gpa is not None:
@@ -575,15 +580,24 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         ds = datasets.get(ds_key) or next(iter(datasets.values()))
         nz, ny, nx = stack_dimensions(str(ds.timepoints[0].path))
         tp_max = max(0, len(ds.timepoints) - 1)
-        tp_marks = {i: f"{tp.t_h:g}h" for i, tp in enumerate(ds.timepoints)}
+        tp_marks = {
+            i: tp.label.split("(")[0].strip()[:12]
+            for i, tp in enumerate(ds.timepoints)
+        }
         tp_val = min(1, tp_max)
         z_max = max(0, nz - 1)
-        z_val = min(z_max, max(0, 50 if nz <= 80 else nz // 2))
+        z_val = nz // 2
         z_marks = {0: "0", z_max // 2: str(z_max // 2), z_max: str(z_max)}
 
-        rx = [max(0, nx // 2 - 26), min(nx, nx // 2 + 26)] if nx > 200 else [min(86, nx - 16), min(nx, 138)]
-        ry = [max(0, ny // 2 - 26), min(ny, ny // 2 + 26)] if ny > 200 else [min(54, ny - 16), min(ny, 106)]
-        rz = [max(0, z_val - 12), min(nz, z_val + 10)]
+        if ds_key == "dls_i13_zn13x":
+            rx = [min(nx - 20, 190), min(nx, 300)]
+            ry = [min(ny - 20, 130), min(ny, 240)]
+        else:
+            half_xy = min(48, max(16, nx // 4))
+            rx = [max(0, nx // 2 - half_xy), min(nx, nx // 2 + half_xy)]
+            ry = [max(0, ny // 2 - half_xy), min(ny, ny // 2 + half_xy)]
+        half_z = min(20, max(6, nz // 4))
+        rz = [max(0, z_val - half_z), min(nz, z_val + half_z)]
         return (
             tp_max,
             tp_marks,
@@ -975,11 +989,11 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             rid = registry.put(ex)
             return rid, _append_history(history, _history_entry_from_run(ex)), "sim"
 
-        # Default: Generate & Simulate (PorousDiff AI or Synthetic Generator)
         kpa_val = float(clamping_kpa if clamping_kpa is not None else 150.0)
         eps_val = float(porosity if porosity is not None else 0.78)
         label_map = {
             "porousdiff_gallery": f"PorousDiff Carbon Felt ({kpa_val:.0f} kPa)",
+            "two_phase_xct": "Real 2-Phase Porous XCT (100³)",
             "carbon_felt": f"Custom Carbon Felt ({kpa_val:.0f} kPa)",
             "multiphase_electrode": f"3-Phase Cathode ({eps_val * 100:.0f}% pore)",
             "overlapping_spheres": f"Sphere Packing ({eps_val * 100:.0f}% pore)",
@@ -987,21 +1001,28 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             "benchmark_dataset": "Benchmark 8-Sphere Pack",
             "open_cube": "Straight-Channel Test Cube",
         }
-        solid_phases = () if source_kind == "open_cube" else (1, 2)
+        actual_kind = "benchmark_dataset" if source_kind == "two_phase_xct" else source_kind
+        ds_name_arg = (
+            "two_phase_stack"
+            if source_kind == "two_phase_xct"
+            else ("sphere_pack" if source_kind == "benchmark_dataset" else None)
+        )
+        solid_phases = () if actual_kind == "open_cube" else (1, 2)
         phase_diffs = (
             {0: 1.0, 1: 0.0, 2: 0.18}
-            if source_kind == "multiphase_electrode"
+            if actual_kind == "multiphase_electrode"
             else {0: 1.0, 1: 0.0}
         )
         ms = MicrostructureSpec(
-            source_kind=source_kind,  # type: ignore[arg-type]
+            source_kind=actual_kind,  # type: ignore[arg-type]
+            dataset_name=ds_name_arg,
             label=label_map.get(source_kind, source_kind),
             shape=(side, side, side),
             voxel_size_um=(v_um, v_um, v_um),
             seed=seed,
-            porosity=1.0 if source_kind == "open_cube" else eps_val,
+            porosity=1.0 if actual_kind == "open_cube" else eps_val,
             clamping_kpa=kpa_val,
-            compression_strain=-1.0 if source_kind in ("carbon_felt", "porousdiff_gallery") else 0.0,
+            compression_strain=-1.0 if actual_kind in ("carbon_felt", "porousdiff_gallery") else 0.0,
             electrode_role=electrode_role or "negative",
         )
         ss = SolveSpec(

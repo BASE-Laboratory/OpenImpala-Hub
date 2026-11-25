@@ -405,17 +405,46 @@ def load_or_generate_microstructure(
     if kind == "porousdiff_gallery":
         entries = list_porousdiff_gallery()
         if entries:
+            target_kpa = float(spec.clamping_kpa)
             chosen = min(
                 entries,
-                key=lambda e: abs(float(e.get("clamping_kpa", 150.0)) - float(spec.clamping_kpa)),
+                key=lambda e: abs(float(e.get("clamping_kpa", 150.0)) - target_kpa),
             )
+            base_kpa = float(chosen.get("clamping_kpa", 150.0))
             p = Path(str(chosen["resolved_path"]))
-            return _load_path_microstructure(
+            vol_out, orig_out, prec_out, shp_out = _load_path_microstructure(
                 p,
                 spec=spec,
                 origin="porousdiff",
-                default_precision="PorousDiff conditional 3D diffusion (.ome.zarr)",
+                default_precision=f"DLS I12 / PorousDiff synchrotron carbon felt ({base_kpa:.0f} kPa base)",
             )
+            if spec.roi_zyx is None and any(
+                cur > tgt for cur, tgt in zip(vol_out.shape, spec.shape)
+            ):
+                sz = min(vol_out.shape[0], spec.shape[0])
+                sy = min(vol_out.shape[1], spec.shape[1])
+                sx = min(vol_out.shape[2], spec.shape[2])
+                solid_3d = (np.asarray(vol_out.data) > 0).astype(np.float32)
+                cy0 = max(0, (vol_out.shape[1] - sy) // 2)
+                cx0 = max(0, (vol_out.shape[2] - sx) // 2)
+                z_prof = solid_3d[:, cy0 : cy0 + sy, cx0 : cx0 + sx].mean(axis=(1, 2))
+                if vol_out.shape[0] > sz:
+                    win_scores = np.convolve(z_prof, np.ones(sz, dtype=np.float32), mode="valid")
+                    cz0 = int(np.argmax(win_scores))
+                else:
+                    cz0 = 0
+                vol_out = vol_out[cz0 : cz0 + sz, cy0 : cy0 + sy, cx0 : cx0 + sx]
+            if target_kpa > base_kpa + 12.0:
+                from .porousdiff_bridge import kinematic_compress_volume
+
+                extra_strain = min(
+                    0.35,
+                    max(0.0, strain_from_clamping_kpa(target_kpa) - strain_from_clamping_kpa(base_kpa)) * 0.55,
+                )
+                if extra_strain > 0.015:
+                    vol_out = kinematic_compress_volume(vol_out, extra_strain, conducting_phase=0)
+                    prec_out = f"{prec_out} + kinematic compression to {target_kpa:.0f} kPa"
+            return vol_out, orig_out, prec_out, shp_out
         # No .ome.zarr gallery staged yet: run stress-conditioned CPU surrogate with honest provenance
         strain = (
             spec.compression_strain

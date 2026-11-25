@@ -1,0 +1,121 @@
+{
+    "basecoat_axes_by_level": {
+        "0": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.0,
+                "scale": 3.25,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.0,
+                "scale": 3.25,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.0,
+                "scale": 3.25,
+                "unit": "um"
+            }
+        ],
+        "1": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 1.625,
+                "scale": 6.5,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 1.625,
+                "scale": 6.5,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 1.625,
+                "scale": 6.5,
+                "unit": "um"
+            }
+        ]
+    },
+    "basecoat_centering": "cell",
+    "basecoat_provenance": {
+        "basecoat_version": "0.3.0",
+        "beamline": "DLS_I13-2",
+        "citation": "Green et al., Scientific Data 12, 329 (2025)",
+        "data_origin": "benchmark_xct",
+        "doi": "10.5281/zenodo.14245751",
+        "git_sha": "438405c05580",
+        "scan_id": "169067",
+        "written_at_utc": "2026-11-25T20:44:19.857624+00:00"
+    },
+    "multiscales": [
+        {
+            "axes": [
+                {
+                    "name": "z",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "y",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "x",
+                    "type": "space",
+                    "unit": "micrometer"
+                }
+            ],
+            "datasets": [
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                3.25,
+                                3.25,
+                                3.25
+                            ],
+                            "type": "scale"
+                        }
+                    ],
+                    "path": "0"
+                },
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                6.5,
+                                6.5,
+                                6.5
+                            ],
+                            "type": "scale"
+                        },
+                        {
+                            "translation": [
+                                1.625,
+                                1.625,
+                                1.625
+                            ],
+                            "type": "translation"
+                        }
+                    ],
+                    "path": "1"
+                }
+            ],
+            "name": "dls_i13_zn13x_capillary",
+            "type": "block_mean",
+            "version": "0.4"
+        }
+    ]
+}

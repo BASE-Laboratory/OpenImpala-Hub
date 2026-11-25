@@ -1,0 +1,156 @@
+{
+    "basecoat_axes_by_level": {
+        "0": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            }
+        ],
+        "1": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            }
+        ]
+    },
+    "basecoat_centering": "cell",
+    "basecoat_provenance": {
+        "basecoat_version": "0.3.0",
+        "beamline": "DLS_I12",
+        "clamping_kpa": 238.0,
+        "data_origin": "benchmark_xct",
+        "git_sha": "438405c05580",
+        "porosity": 0.8528,
+        "written_at_utc": "2026-11-25T20:44:15.810089+00:00"
+    },
+    "image-label": {
+        "colors": [
+            {
+                "label-value": 0,
+                "rgba": [
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            },
+            {
+                "label-value": 1,
+                "rgba": [
+                    230,
+                    159,
+                    0,
+                    255
+                ]
+            }
+        ],
+        "properties": [
+            {
+                "label-value": 0,
+                "name": "pore"
+            },
+            {
+                "label-value": 1,
+                "name": "carbon_fiber"
+            }
+        ],
+        "source": {
+            "image": "../../"
+        },
+        "version": "0.4"
+    },
+    "multiscales": [
+        {
+            "axes": [
+                {
+                    "name": "z",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "y",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "x",
+                    "type": "space",
+                    "unit": "micrometer"
+                }
+            ],
+            "datasets": [
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                3.2,
+                                3.2,
+                                3.2
+                            ],
+                            "type": "scale"
+                        }
+                    ],
+                    "path": "0"
+                },
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                6.4,
+                                6.4,
+                                6.4
+                            ],
+                            "type": "scale"
+                        },
+                        {
+                            "translation": [
+                                1.6,
+                                1.6,
+                                1.6
+                            ],
+                            "type": "translation"
+                        }
+                    ],
+                    "path": "1"
+                }
+            ],
+            "name": "dls_i12_felt_238kpa",
+            "type": "block_mode",
+            "version": "0.4"
+        }
+    ]
+}

@@ -27,6 +27,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE CITATION.cff AGENTS.md ./
 COPY src ./src
 COPY data ./data
+COPY docs_site/data ./docs_site/data
 
 ARG SMS_GITHUB_TOKEN=""
 RUN pip install --upgrade pip \
