@@ -1,0 +1,118 @@
+{
+    "basecoat_axes_by_level": {
+        "0": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.0,
+                "scale": 3.2,
+                "unit": "um"
+            }
+        ],
+        "1": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 1.6,
+                "scale": 6.4,
+                "unit": "um"
+            }
+        ]
+    },
+    "basecoat_centering": "cell",
+    "basecoat_provenance": {
+        "basecoat_version": "0.3.0",
+        "git_sha": "77588cd0fe33",
+        "label": "0h pristine",
+        "time_h": 0.0,
+        "written_at_utc": "2026-11-25T19:02:16.898625+00:00"
+    },
+    "multiscales": [
+        {
+            "axes": [
+                {
+                    "name": "z",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "y",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "x",
+                    "type": "space",
+                    "unit": "micrometer"
+                }
+            ],
+            "datasets": [
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                3.2,
+                                3.2,
+                                3.2
+                            ],
+                            "type": "scale"
+                        }
+                    ],
+                    "path": "0"
+                },
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                6.4,
+                                6.4,
+                                6.4
+                            ],
+                            "type": "scale"
+                        },
+                        {
+                            "translation": [
+                                1.6,
+                                1.6,
+                                1.6
+                            ],
+                            "type": "translation"
+                        }
+                    ],
+                    "path": "1"
+                }
+            ],
+            "name": "t0_0h",
+            "type": "block_mean",
+            "version": "0.4"
+        }
+    ]
+}
