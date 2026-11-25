@@ -16,10 +16,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install OpenImpala-Hub with C++/MPI wheel & dev dependencies
+      - name: Install Fortran/MPI toolchain for SMS Layer-3 solver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gfortran libopenmpi-dev cmake
+
+      - name: Install OpenImpala-Hub with C++/MPI, SMS Fortran & dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[mpi,dev]"
+          pip install -e ".[mpi,sms,dev]"
           playwright install --with-deps chromium
 
       - name: Enforce BASE Lab Layer 4 import boundaries
@@ -30,8 +35,9 @@ jobs:
           openimpala-hub --help
           openimpala-hub presets
           openimpala-hub verify
+          openimpala-hub run --preset carbon_felt_compression --mechanics --chemistry nmc811_li_ion
 
-      - name: Run unit, bundle, and API test suite
+      - name: Run unit, multiphysics, bundle, and E2E test suite
         run: pytest -v
 
   docker-smoke:
@@ -43,7 +49,7 @@ jobs:
       - name: Build Docker image
         run: docker build -t openimpala-hub:ci .
 
-      - name: Start container and verify /healthz + /api/v1/solve
+      - name: Start container and verify /healthz + coupled OpenImpala & SMS /api/v1/solve
         run: |
           docker run -d --name hub-smoke -p 7860:7860 openimpala-hub:ci
           for i in $(seq 1 30); do
@@ -56,6 +62,6 @@ jobs:
           curl -fsS http://127.0.0.1:7860/healthz | jq -e '.status == "ok" and .solver_backend == "cpp-cpu"'
           curl -fsS -X POST http://127.0.0.1:7860/api/v1/solve \
             -H "Content-Type: application/json" \
-            -d '{"preset": "teaching_analytical_cube", "shape": [24, 24, 24]}' \
-            | jq -e '.porosity == 1 and .directional.z.tortuosity == 1'
+            -d '{"microstructure": {"source_kind": "carbon_felt", "shape": [20, 20, 20], "voxel_size_um": [1.6, 1.6, 1.6]}, "solve": {"directions": ["z"], "compute_mechanics": true}}' \
+            | jq -e '.mechanics.backend == "sms-fortran" and .electrochem.limiting_c_rate > 0'
           docker rm -f hub-smoke

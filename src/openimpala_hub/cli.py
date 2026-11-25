@@ -89,6 +89,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run a subvolume Representative Elementary Volume (REV) convergence check",
     )
     p_run.add_argument(
+        "--mechanics",
+        action="store_true",
+        help="Run coupled 3D linear elasticity & von Mises stress via SMS (when installed)",
+    )
+    p_run.add_argument(
+        "--chemistry",
+        choices=("nmc811_li_ion", "lfp_high_rate", "vanadium_flow_felt"),
+        default="nmc811_li_ion",
+        help="Continuum cell chemistry preset for C-rate polarisation prediction",
+    )
+    p_run.add_argument(
+        "--virtual-compress-strain",
+        type=float,
+        default=0.0,
+        help="Apply mass-conserving kinematic Z-compression strain (0..0.65) to --input or benchmark",
+    )
+    p_run.add_argument(
         "--solver",
         choices=("mlmg", "hypre", "scipy"),
         default=None,
@@ -165,6 +182,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             upload_path=str(p),
             voxel_size_um=vz,
             override_calibrated_spacing=override_cal,
+            virtual_compression_strain=float(args.virtual_compress_strain or 0.0),
             threshold=None,
             dark_is_pore=not bool(args.bright_is_pore),
             electrode_role=args.electrode_role or "negative",
@@ -175,6 +193,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             solid_phases=(0,) if cond_id == 1 else (1, 2),
             solver=args.solver or "mlmg",
             compute_rev_study=bool(args.rev_study),
+            compute_mechanics=bool(args.mechanics),
+            chemistry_preset=args.chemistry,
         )
     else:
         preset = PRESETS[args.preset]
@@ -190,19 +210,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
             m_overrides["voxel_size_um"] = tuple(float(x) for x in args.voxel_spacing_zyx_um)
         if args.electrode_role is not None:
             m_overrides["electrode_role"] = args.electrode_role
+        if args.virtual_compress_strain:
+            m_overrides["virtual_compression_strain"] = float(args.virtual_compress_strain)
         if m_overrides:
             mspec = MicrostructureSpec(**{**mspec.to_dict(), **m_overrides})  # type: ignore[arg-type]
 
         sspec = preset.solve
-        s_overrides: dict[str, object] = {}
+        s_overrides: dict[str, object] = {"chemistry_preset": args.chemistry}
         if args.solver is not None:
             s_overrides["solver"] = args.solver
         if args.conducting_phase is not None:
             s_overrides["conducting_phase"] = int(args.conducting_phase)
         if args.rev_study:
             s_overrides["compute_rev_study"] = True
-        if s_overrides:
-            sspec = SolveSpec(**{**sspec.to_dict(), **s_overrides})  # type: ignore[arg-type]
+        if args.mechanics:
+            s_overrides["compute_mechanics"] = True
+        sspec = SolveSpec(**{**sspec.to_dict(), **s_overrides})  # type: ignore[arg-type]
 
     executed = run_transport_pipeline(mspec, sspec)
     if args.output_bundle:
@@ -225,9 +248,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 f"  Axis {d.upper()}: percolates={dt.percolates}, "
                 f"tau={dt.tortuosity}, D_eff={dt.effective_diffusivity:.4f}"
             )
+        clim = (s.electrochem or {}).get("limiting_c_rate", 0.0)
+        mech_str = ""
+        if s.mechanics and s.mechanics.get("backend") == "sms-fortran":
+            mech_str = f" | E_eff={s.mechanics['effective_modulus_gpa']:.3f} GPa"
         print(
             f"  SSA (Cauchy-Crofton): {s.specific_surface_area_m_inv:.1f} m^-1 | "
-            f"R_cell FoM: {s.cell_resistance_fom:.4f} | Solve: {s.solve_time_s:.3f}s"
+            f"C_lim: {clim:.2f}C{mech_str} | R_cell FoM: {s.cell_resistance_fom:.4f} | "
+            f"Solve: {s.solve_time_s:.3f}s"
         )
     return 0
 

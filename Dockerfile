@@ -10,9 +10,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        cmake \
         curl \
+        gcc \
+        gfortran \
         git \
         libgomp1 \
+        libopenmpi-dev \
+        make \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (UID 1000 matches Hugging Face Spaces Docker & rootless best practices)
@@ -24,7 +29,7 @@ COPY src ./src
 COPY data ./data
 
 RUN pip install --upgrade pip \
-    && pip install ".[mpi,server]" \
+    && pip install ".[mpi,sms,server]" \
     && chown -R hubuser:hubuser /app
 
 USER hubuser

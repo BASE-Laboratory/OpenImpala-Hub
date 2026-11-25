@@ -1,0 +1,1934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The OpenImpala Hub (v0.3.0) — Lite Digital Twin | BASE Laboratory</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --background: #f8fafc;
+      --foreground: #0f172a;
+      --card: #ffffff;
+      --card-border: #e2e8f0;
+      --border: #cbd5e1;
+      --muted-foreground: #64748b;
+      --primary: #2563eb;
+      --primary-foreground: #ffffff;
+      --secondary: #f1f5f9;
+      --secondary-foreground: #0f172a;
+    }
+    html.dark {
+      --background: #0b1120;
+      --foreground: #f1f5f9;
+      --card: #111827;
+      --card-border: #1e293b;
+      --border: #334155;
+      --muted-foreground: #94a3b8;
+      --primary: #3b82f6;
+      --primary-foreground: #ffffff;
+      --secondary: #1e293b;
+      --secondary-foreground: #e2e8f0;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 space-y-4">
+
+  <!-- Top Header & Presets -->
+  <header class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <span class="px-2.5 py-1 rounded text-xs font-bold tracking-wider bg-[var(--primary)] text-[var(--primary-foreground)]">BASE LAB · v0.3.0</span>
+      <div>
+        <div class="text-base font-bold leading-tight">The OpenImpala Hub · Electro-Chemo-Mechanical Digital Twin</div>
+        <div class="text-xs text-[var(--muted-foreground)]">7-Point FV Transport · 6-Connected Pore Network &amp; S₂(r) · 0.5C–4C Electrochemistry · Bayesian GP Steering</div>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-1.5 text-xs">
+      <button onclick="runPreset('felt')" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-medium hover:opacity-90">1 · Carbon Felt</button>
+      <button onclick="runPreset('cathode')" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-medium hover:opacity-90">2 · 3-Phase Cathode</button>
+      <button onclick="runPreset('cube')" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-medium hover:opacity-90">3a · Cube (τ=1.000)</button>
+      <button onclick="runPreset('spheres')" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-medium hover:opacity-90">3b · Sphere Pack</button>
+      <button onclick="toggleTeachingLab()" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">🎓 Teaching Lab</button>
+      <button onclick="exportBPX()" class="px-2.5 py-1.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-semibold hover:opacity-90">⬇ BPX JSON</button>
+      <button onclick="document.documentElement.classList.toggle('dark'); renderAll();" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">🌙 Theme</button>
+      <a href="https://github.com/BASE-Laboratory/OpenImpala-Hub" target="_blank" rel="noopener" class="px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">GitHub (C++ / SMS Docker)</a>
+    </div>
+  </header>
+
+  <!-- Collapsible Greenwich MSc/BEng Teaching Lab Drawer -->
+  <section id="teachingDrawer" class="hidden bg-[var(--card)] border border-[var(--border)] rounded-lg p-3.5 space-y-2 text-xs">
+    <div class="flex items-center justify-between">
+      <div class="font-bold text-sm">🎓 Greenwich MSc / BEng Image-Based Battery Modelling Worksheet (Auto-Graded)</div>
+      <span id="labScoreBadge" class="px-2 py-0.5 rounded font-mono font-bold bg-[var(--secondary)] text-[var(--secondary-foreground)]">0 / 4 Completed</span>
+    </div>
+    <div id="teachingStepsGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5"></div>
+  </section>
+
+  <!-- Main Grid: Sidebar + Content -->
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+    <!-- Left Controls Sidebar -->
+    <aside class="lg:col-span-3 bg-[var(--card)] border border-[var(--border)] rounded-lg p-3.5 space-y-3 self-start">
+      <div class="text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Step 1 · Microstructure</div>
+
+      <div class="space-y-1">
+        <label class="text-xs font-semibold text-[var(--muted-foreground)] block">Generator / Source</label>
+        <select id="genSelect" onchange="syncControlVisibility()" class="w-full px-2.5 py-1.5 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] text-xs">
+          <option value="carbon_felt">Anisotropic Carbon Felt (+Coating)</option>
+          <option value="cathode">3-Phase Composite Cathode (NMC+CBD)</option>
+          <option value="spheres">Overlapping Sphere Packing</option>
+          <option value="open_cube">Analytical Open Cube (τ = 1.000)</option>
+          <option value="xct_grey">Experimental XCT Greyscale (Otsu/Manual)</option>
+        </select>
+      </div>
+
+      <!-- Greyscale XCT Threshold Preview Drawer -->
+      <div id="xctDrawer" class="hidden rounded border border-[var(--border)] bg-[var(--background)] p-2.5 space-y-2 text-xs">
+        <div class="font-semibold">Greyscale XCT Segmentation Preview</div>
+        <div class="flex items-center justify-between gap-2">
+          <span>Threshold:</span>
+          <span id="thrReadout" class="font-mono font-bold">122 (Otsu)</span>
+        </div>
+        <input id="thrSlider" type="range" min="25" max="230" step="1" value="122" oninput="onXctPreviewChange(false)" class="w-full accent-[var(--primary)]" />
+        <div class="flex items-center justify-between gap-2">
+          <button onclick="onXctPreviewChange(true)" class="px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)]">Auto Otsu</button>
+          <select id="polSelect" onchange="onXctPreviewChange(false)" class="px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)]">
+            <option value="dark">Dark = Pore (0)</option>
+            <option value="bright">Bright = Pore (0)</option>
+          </select>
+        </div>
+        <canvas id="xctPrevCanvas" width="240" height="115" class="w-full rounded border border-[var(--card-border)]"></canvas>
+      </div>
+
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)]">Cubic Grid (N³)</span>
+          <span id="gridReadout" class="font-mono">22³</span>
+        </div>
+        <input id="gridSlider" type="range" min="16" max="28" step="2" value="22" oninput="document.getElementById('gridReadout').textContent=this.value+'³'" class="w-full accent-[var(--primary)]" />
+      </div>
+
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)]">Voxel Spacing [µm]</span>
+          <span id="voxReadout" class="font-mono">1.6 µm</span>
+        </div>
+        <input id="voxSlider" type="range" min="0.5" max="4.0" step="0.1" value="1.6" oninput="document.getElementById('voxReadout').textContent=parseFloat(this.value).toFixed(1)+' µm'" class="w-full accent-[var(--primary)]" />
+      </div>
+
+      <div id="clampBlock" class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)]">Clamping Pressure σ</span>
+          <span id="clampReadout" class="font-mono font-bold">150 kPa</span>
+        </div>
+        <input id="clampSlider" type="range" min="20" max="500" step="10" value="150" oninput="document.getElementById('clampReadout').textContent=this.value+' kPa'" class="w-full accent-[var(--primary)]" />
+      </div>
+
+      <div id="porBlock" class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)]">Base Porosity</span>
+          <span id="porReadout" class="font-mono">0.84</span>
+        </div>
+        <input id="porSlider" type="range" min="0.28" max="0.88" step="0.02" value="0.84" oninput="document.getElementById('porReadout').textContent=parseFloat(this.value).toFixed(2)" class="w-full accent-[var(--primary)]" />
+      </div>
+
+      <div class="space-y-1">
+        <label class="text-xs font-semibold text-[var(--muted-foreground)] block">Deterministic Seed</label>
+        <input id="seedInput" type="number" value="42" min="1" max="9999" class="w-full px-2.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] text-xs font-mono" />
+      </div>
+
+      <div class="pt-2 border-t border-[var(--card-border)] space-y-2">
+        <div class="text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Step 2 · Physics &amp; Role</div>
+        <div class="space-y-1">
+          <label class="text-xs font-semibold text-[var(--muted-foreground)] block">Cell Role (PyBaMM / BPX)</label>
+          <select id="roleSelect" class="w-full px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] text-xs">
+            <option value="negative">Negative Electrode (Anode / Felt)</option>
+            <option value="positive">Positive Electrode (Cathode)</option>
+            <option value="separator">Porous Separator</option>
+          </select>
+        </div>
+        <button onclick="executeCustomRun()" class="w-full py-2 px-3 rounded bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold hover:opacity-90">
+          ▶ Generate &amp; Solve 3D PDE
+        </button>
+        <div id="solveTiming" class="text-xs text-[var(--muted-foreground)] font-mono text-center"></div>
+      </div>
+    </aside>
+
+    <!-- Right Workspace -->
+    <main class="lg:col-span-9 space-y-3">
+
+      <!-- Active Run Banner -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="originPill" class="px-2 py-0.5 rounded-full font-semibold bg-[var(--secondary)] text-[var(--secondary-foreground)]">origin: synthetic</span>
+          <span id="gridPill" class="px-2 py-0.5 rounded-full font-mono bg-[var(--secondary)] text-[var(--secondary-foreground)]">22×22×22 @ 1.6 µm</span>
+          <span id="activeTitle" class="font-bold text-sm">Anisotropic Carbon Felt (150 kPa)</span>
+        </div>
+        <span id="convBadge" class="font-mono text-[var(--muted-foreground)]">FV residual &lt; 1e-6</span>
+      </div>
+
+      <!-- 6 KPI Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">Porosity ε</div>
+          <div id="kpiPor" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div id="kpiPorSub" class="text-xs text-[var(--muted-foreground)]">conducting fraction</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">Through-Plane τ_Z</div>
+          <div id="kpiTauZ" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div id="kpiAniso" class="text-xs text-[var(--muted-foreground)]">—</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">D_eff,Z / D_0</div>
+          <div id="kpiDeff" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div id="kpiMac" class="text-xs text-[var(--muted-foreground)]">—</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">SSA (2/3 CC)</div>
+          <div id="kpiSSA" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div class="text-xs text-[var(--muted-foreground)]">m⁻¹ unbiased</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">Solid σ_eff,Z / σ_0</div>
+          <div id="kpiSig" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div id="kpiSigSub" class="text-xs text-[var(--muted-foreground)]">—</div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-2.5">
+          <div class="text-xs text-[var(--muted-foreground)]">Cell Resistance R_cell</div>
+          <div id="kpiRcell" class="text-lg font-bold font-mono tabular-nums mt-0.5">—</div>
+          <div class="text-xs text-[var(--muted-foreground)]">twin objective</div>
+        </div>
+      </div>
+
+      <!-- Tab Bar -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-lg p-3.5 space-y-3">
+        <div class="flex flex-wrap gap-1.5 border-b border-[var(--card-border)] pb-2.5 text-xs font-semibold">
+          <button id="tabBtn-2d" onclick="switchTab('2d')" class="px-3 py-1.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)]">2D Slices &amp; Flux</button>
+          <button id="tabBtn-3d" onclick="switchTab('3d')" class="px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">3D Cutaway</button>
+          <button id="tabBtn-morph" onclick="switchTab('morph')" class="px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">Morphology &amp; Pore Network</button>
+          <button id="tabBtn-echem" onclick="switchTab('echem')" class="px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">Cell Electrochemistry</button>
+          <button id="tabBtn-cmp" onclick="switchTab('cmp')" class="px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">Compare States</button>
+          <button id="tabBtn-twin" onclick="switchTab('twin')" class="px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]">Autonomous GP Planner</button>
+        </div>
+
+        <!-- TAB 1: 2D Slices & Flux -->
+        <div id="panel-2d" class="space-y-3">
+          <div class="flex flex-wrap items-center gap-4 text-xs pb-2 border-b border-[var(--card-border)]">
+            <label class="flex items-center gap-1.5">
+              <span class="text-[var(--muted-foreground)] font-semibold">Plane:</span>
+              <select id="planeSelect" onchange="onPlaneChange()" class="px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+                <option value="xz">XZ (Flow Axis)</option>
+                <option value="xy">XY (In-Plane)</option>
+                <option value="yz">YZ (Cross)</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-[var(--muted-foreground)] font-semibold">Field:</span>
+              <select id="layerSelect" onchange="render2D()" class="px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+                <option value="flux">Diffusive Flux |J / J0|</option>
+                <option value="pot">Steady-State Potential φ</option>
+                <option value="phase">Segmented Phase ID</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-2 flex-1 min-w-[180px]">
+              <span class="text-[var(--muted-foreground)] font-semibold">Slice:</span>
+              <input id="sliceSlider" type="range" min="0" max="21" value="11" oninput="render2D()" class="flex-1 accent-[var(--primary)]" />
+              <span id="sliceReadout" class="font-mono w-16 text-right">11</span>
+            </label>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+            <div class="md:col-span-7 flex flex-col items-center">
+              <canvas id="sliceCanvas" width="380" height="340" class="w-full max-w-[400px] rounded border border-[var(--card-border)]"></canvas>
+            </div>
+            <div class="md:col-span-5 space-y-3">
+              <canvas id="barCanvas" width="320" height="165" class="w-full rounded border border-[var(--card-border)]"></canvas>
+              <canvas id="profCanvas" width="320" height="165" class="w-full rounded border border-[var(--card-border)]"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: 3D Isometric Voxel Cutaway -->
+        <div id="panel-3d" class="hidden space-y-3">
+          <div class="flex flex-wrap items-center gap-4 text-xs pb-2 border-b border-[var(--card-border)]">
+            <label class="flex items-center gap-2">
+              <span class="text-[var(--muted-foreground)] font-semibold">Yaw:</span>
+              <input id="yawSlider" type="range" min="-180" max="180" value="38" oninput="render3D()" class="accent-[var(--primary)]" />
+            </label>
+            <label class="flex items-center gap-2">
+              <span class="text-[var(--muted-foreground)] font-semibold">Z Cutaway [%]:</span>
+              <input id="cutZSlider" type="range" min="20" max="100" value="100" oninput="render3D()" class="accent-[var(--primary)]" />
+            </label>
+            <label class="flex items-center gap-2">
+              <span class="text-[var(--muted-foreground)] font-semibold">X Cutaway [%]:</span>
+              <input id="cutXSlider" type="range" min="20" max="100" value="85" oninput="render3D()" class="accent-[var(--primary)]" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <input id="showRoi3D" type="checkbox" checked onchange="render3D()" class="accent-[var(--primary)]" />
+              <span>Show Zoom-ROI #1 Box</span>
+            </label>
+          </div>
+          <div class="flex flex-col items-center">
+            <canvas id="isoCanvas" width="560" height="380" class="w-full max-w-[580px] rounded border border-[var(--card-border)] cursor-grab"></canvas>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">Drag canvas horizontally to orbit · Grey = Solid Fibre/Particle (Phase 1) · Amber = Active Coating/CBD (Phase 2) · Cyan = Synchrotron Zoom-ROI #1</div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Morphology & Pore Network -->
+        <div id="panel-morph" class="hidden space-y-3">
+          <div id="morphKpiRow" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs"></div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <canvas id="morphConnCanvas" width="360" height="260" class="w-full rounded border border-[var(--card-border)]"></canvas>
+            <canvas id="morphS2Canvas" width="360" height="260" class="w-full rounded border border-[var(--card-border)]"></canvas>
+          </div>
+          <div class="text-xs text-[var(--muted-foreground)]">Exact 6-connected BFS pore-network partition (Percolating vs Dead-End vs Isolated/Trapped) + periodic 2-point correlation S₂(r) satisfying S₂(0) = ε.</div>
+        </div>
+
+        <!-- TAB 4: Cell Electrochemistry & Axial Stiffness -->
+        <div id="panel-echem" class="hidden space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[var(--card-border)] text-xs">
+            <label class="flex items-center gap-2">
+              <span class="font-semibold text-[var(--muted-foreground)]">Chemistry Preset:</span>
+              <select id="chemSelect" onchange="renderElectrochem()" class="px-2.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+                <option value="nmc811">NMC811 | Graphite Li-Ion (1 M LiPF6)</option>
+                <option value="lfp">LFP | Graphite High-Rate (1.2 M LiPF6)</option>
+                <option value="vanadium">Vanadium / Aqueous Redox Carbon Felt</option>
+              </select>
+            </label>
+            <div id="echemBanner" class="font-mono text-xs text-[var(--muted-foreground)]"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <canvas id="echemCurveCanvas" width="360" height="270" class="w-full rounded border border-[var(--card-border)]"></canvas>
+            <canvas id="echemLossCanvas" width="360" height="270" class="w-full rounded border border-[var(--card-border)]"></canvas>
+          </div>
+        </div>
+
+        <!-- TAB 5: Compare States -->
+        <div id="panel-cmp" class="hidden space-y-3">
+          <div class="flex flex-wrap items-center gap-4 text-xs pb-2 border-b border-[var(--card-border)]">
+            <label class="flex items-center gap-1.5">
+              <span class="text-[var(--muted-foreground)] font-semibold">Left Run:</span>
+              <select id="cmpLeftSel" onchange="renderCompare()" class="px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"></select>
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-[var(--muted-foreground)] font-semibold">Right Run:</span>
+              <select id="cmpRightSel" onchange="renderCompare()" class="px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"></select>
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-[var(--muted-foreground)] font-semibold">Field:</span>
+              <select id="cmpLayerSel" onchange="renderCompare()" class="px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+                <option value="flux">Flux Crowding |J / J0| (Shared Scale)</option>
+                <option value="phase">Segmented Phase ID</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <canvas id="cmpLeftCanvas" width="340" height="280" class="w-full rounded border border-[var(--card-border)]"></canvas>
+            <canvas id="cmpRightCanvas" width="340" height="280" class="w-full rounded border border-[var(--card-border)]"></canvas>
+          </div>
+          <div id="cmpTableWrap" class="overflow-x-auto text-xs"></div>
+        </div>
+
+        <!-- TAB 6: Autonomous GP Planner -->
+        <div id="panel-twin" class="hidden space-y-3">
+          <div class="bg-[var(--background)] border border-[var(--card-border)] rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div>
+              <span class="font-bold text-sm" id="gpHeadline">Next Recommended Scan: —</span>
+              <div id="gpSubline" class="text-[var(--muted-foreground)] mt-0.5">Matérn-5/2 Gaussian Process Expected-Improvement acquisition</div>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <button onclick="executeSuggestedScan()" class="px-3 py-2 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-bold hover:opacity-90">
+                ⚡ Execute Recommended Scan
+              </button>
+              <button onclick="runFivePointSweep()" class="px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">
+                ⚡ Run 5-Point Sweep
+              </button>
+              <button onclick="jumpToRoi1()" class="px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">
+                🎯 View ROI #1
+              </button>
+              <button onclick="saveCampaignJSON()" class="px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">
+                ⬇ Save Campaign
+              </button>
+              <button onclick="resetCampaign()" class="px-2.5 py-2 rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] font-semibold hover:opacity-90">
+                ↺ Reset
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Cell Regime Sliders (recomputes R_cell & GP posterior instantly without PDE re-solve) -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 bg-[var(--background)] border border-[var(--card-border)] rounded-lg p-2.5 text-xs">
+            <div>
+              <div class="flex justify-between"><span class="text-[var(--muted-foreground)] font-semibold">w_ion</span><span id="wIonVal" class="font-mono">0.58</span></div>
+              <input id="wIonSlider" type="range" min="0.10" max="1.20" step="0.05" value="0.58" oninput="onRegimeChange()" class="w-full accent-[var(--primary)]" />
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[var(--muted-foreground)] font-semibold">w_elec</span><span id="wElecVal" class="font-mono">0.27</span></div>
+              <input id="wElecSlider" type="range" min="0.05" max="1.00" step="0.05" value="0.27" oninput="onRegimeChange()" class="w-full accent-[var(--primary)]" />
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[var(--muted-foreground)] font-semibold">w_kin</span><span id="wKinVal" class="font-mono">0.15</span></div>
+              <input id="wKinSlider" type="range" min="0.00" max="0.80" step="0.05" value="0.15" oninput="onRegimeChange()" class="w-full accent-[var(--primary)]" />
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[var(--muted-foreground)] font-semibold">σ_0 / κ_0</span><span id="sigKapVal" class="font-mono">16</span></div>
+              <input id="sigKapSlider" type="range" min="2" max="50" step="2" value="16" oninput="onRegimeChange()" class="w-full accent-[var(--primary)]" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+            <div class="md:col-span-7">
+              <canvas id="gpCanvas" width="440" height="330" class="w-full rounded border border-[var(--card-border)]"></canvas>
+            </div>
+            <div class="md:col-span-5 space-y-3 text-xs">
+              <div>
+                <div class="font-bold mb-1">Spatial Beamline Trigger · Top 3D Bottleneck ROIs</div>
+                <div id="roiTableWrap"></div>
+              </div>
+              <div>
+                <div class="font-bold mb-1">Evaluated Campaign History (Live R_cell)</div>
+                <div id="histTableWrap" class="max-h-[165px] overflow-y-auto"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+<script>
+// Deterministic PRNG (Mulberry32)
+function mulberry32(a) {
+  return function() {
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rng) {
+  const u = Math.max(1e-9, rng());
+  const v = rng();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+// Microstructure Generators (3D Z,Y,X Uint8Array)
+function strainFromKpa(kpa) {
+  return 0.80 * (1.0 - Math.exp(-Math.max(0, kpa) / 215.0));
+}
+
+function generateMicrostructure(kind, N, basePor, kpa, seed) {
+  const vol = new Uint8Array(N * N * N);
+  if (kind === 'open_cube') return vol;
+  const rng = mulberry32(seed >>> 0);
+
+  if (kind === 'carbon_felt') {
+    const epsZ = Math.min(0.76, strainFromKpa(kpa));
+    const baseSolid = Math.min(0.55, Math.max(0.06, 1.0 - basePor));
+    const comp = 1.0 / Math.max(1.0 - epsZ, 0.22);
+    const targetSolid = Math.min(0.82, baseSolid * comp);
+    const rFib = Math.max(1.05, N / 26.0);
+    const r2 = rFib * rFib;
+    const nFib = Math.max(12, Math.round(1.4 * targetSolid * (N * N * N) / (Math.PI * r2 * 1.3 * N)));
+    const nzUncomp = N * comp;
+    const zScale = 1.0 / comp;
+
+    for (let f = 0; f < nFib; f++) {
+      const cy = (-0.1 + 1.2 * rng()) * N;
+      const cx = (-0.1 + 1.2 * rng()) * N;
+      const cz = rng() * nzUncomp * zScale;
+      const phi = rng() * Math.PI;
+      const tilt = randn(rng) * ((f % 5 === 0 ? 0.62 : 0.20) * (1.0 - 0.5 * epsZ));
+      const ux = Math.cos(tilt) * Math.cos(phi);
+      const uy = Math.cos(tilt) * Math.sin(phi);
+      const uz = Math.sin(tilt);
+      const hl = 0.72 * N;
+      const p0z = cz - hl * uz, p0y = cy - hl * uy, p0x = cx - hl * ux;
+      const vz = 2 * hl * uz, vy = 2 * hl * uy, vx = 2 * hl * vx_safe(ux);
+      const len2 = Math.max(1e-6, vz*vz + vy*vy + vx*vx);
+      const pad = Math.ceil(rFib + 1);
+      const z0 = Math.max(0, Math.floor(Math.min(p0z, p0z+vz)) - pad);
+      const z1 = Math.min(N, Math.ceil(Math.max(p0z, p0z+vz)) + pad);
+      const y0 = Math.max(0, Math.floor(Math.min(p0y, p0y+vy)) - pad);
+      const y1 = Math.min(N, Math.ceil(Math.max(p0y, p0y+vy)) + pad);
+      const x0 = Math.max(0, Math.floor(Math.min(p0x, p0x+vx)) - pad);
+      const x1 = Math.min(N, Math.ceil(Math.max(p0x, p0x+vx)) + pad);
+      for (let z = z0; z < z1; z++) {
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const dz = z - p0z, dy = y - p0y, dx = x - p0x;
+            const t = Math.max(0, Math.min(1, (dz*vz + dy*vy + dx*vx) / len2));
+            const d2 = (dz - t*vz)**2 + (dy - t*vy)**2 + (dx - t*vx)**2;
+            if (d2 <= r2) vol[(z*N + y)*N + x] = 1;
+          }
+        }
+      }
+    }
+    // Surface-supported active coating (phase 2)
+    for (let z = 0; z < N; z++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const idx = (z*N + y)*N + x;
+          if (vol[idx] !== 0) continue;
+          let adj = false;
+          if (z>0 && vol[idx-N*N]===1) adj=true;
+          else if (z<N-1 && vol[idx+N*N]===1) adj=true;
+          else if (y>0 && vol[idx-N]===1) adj=true;
+          else if (y<N-1 && vol[idx+N]===1) adj=true;
+          else if (x>0 && vol[idx-1]===1) adj=true;
+          else if (x<N-1 && vol[idx+1]===1) adj=true;
+          if (adj && rng() < 0.24) vol[idx] = 2;
+        }
+      }
+    }
+    return vol;
+  }
+
+  // Overlapping spheres or 3-phase cathode
+  const targetPor = kind === 'cathode' ? 0.38 : Math.min(0.88, Math.max(0.32, basePor));
+  if (kind === 'xct_grey') {
+    const grey = buildGreyscaleXctVolume(N, seed);
+    const thr = parseInt(document.getElementById('thrSlider')?.value || '122', 10);
+    const darkIsPore = (document.getElementById('polSelect')?.value || 'dark') !== 'bright';
+    for (let i = 0; i < N * N * N; i++) {
+      vol[i] = darkIsPore ? (grey[i] <= thr ? 0 : 1) : (grey[i] > thr ? 0 : 1);
+    }
+    return vol;
+  }
+
+  const rad = Math.max(2.1, N / 5.5);
+  const r2 = rad * rad;
+  const maxSph = 240;
+  let solidCnt = 0;
+  const total = N * N * N;
+  for (let s = 0; s < maxSph && (1.0 - solidCnt / total) > targetPor; s++) {
+    const cz = rng() * N, cy = rng() * N, cx = rng() * N;
+    for (let z = Math.max(0, Math.floor(cz-rad-1)); z < Math.min(N, Math.ceil(cz+rad+1)); z++) {
+      for (let y = Math.max(0, Math.floor(cy-rad-1)); y < Math.min(N, Math.ceil(cy+rad+1)); y++) {
+        for (let x = Math.max(0, Math.floor(cx-rad-1)); x < Math.min(N, Math.ceil(cx+rad+1)); x++) {
+          if ((z-cz)**2 + (y-cy)**2 + (x-cx)**2 <= r2) {
+            const idx = (z*N + y)*N + x;
+            if (vol[idx] === 0) { vol[idx] = 1; solidCnt++; }
+          }
+        }
+      }
+    }
+  }
+  if (kind === 'cathode') {
+    for (let z = 0; z < N; z++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const idx = (z*N + y)*N + x;
+          if (vol[idx] !== 0) continue;
+          const adj = (z>0 && vol[idx-N*N]===1) || (z<N-1 && vol[idx+N*N]===1) ||
+                      (y>0 && vol[idx-N]===1) || (y<N-1 && vol[idx+N]===1) ||
+                      (x>0 && vol[idx-1]===1) || (x<N-1 && vol[idx+1]===1);
+          if (adj && rng() < 0.36) vol[idx] = 2;
+        }
+      }
+    }
+  }
+  return vol;
+}
+function vx_safe(v) { return v; }
+
+// Flood-fill 6-connected inlet-to-outlet active mask along axis (0=Z, 1=Y, 2=X)
+function activePercolatingMask(dCell, N, axis) {
+  const total = N * N * N;
+  const visIn = new Uint8Array(total);
+  const visOut = new Uint8Array(total);
+  const stack = new Int32Array(total);
+
+  function flood(startSeeds, vis) {
+    let sp = 0;
+    for (let i = 0; i < startSeeds.length; i++) {
+      const idx = startSeeds[i];
+      vis[idx] = 1;
+      stack[sp++] = idx;
+    }
+    while (sp > 0) {
+      const idx = stack[--sp];
+      const z = (idx / (N*N)) | 0;
+      const rem = idx - z * N * N;
+      const y = (rem / N) | 0;
+      const x = rem - y * N;
+      if (z > 0 && dCell[idx-N*N] > 0 && !vis[idx-N*N]) { vis[idx-N*N]=1; stack[sp++]=idx-N*N; }
+      if (z < N-1 && dCell[idx+N*N] > 0 && !vis[idx+N*N]) { vis[idx+N*N]=1; stack[sp++]=idx+N*N; }
+      if (y > 0 && dCell[idx-N] > 0 && !vis[idx-N]) { vis[idx-N]=1; stack[sp++]=idx-N; }
+      if (y < N-1 && dCell[idx+N] > 0 && !vis[idx+N]) { vis[idx+N]=1; stack[sp++]=idx+N; }
+      if (x > 0 && dCell[idx-1] > 0 && !vis[idx-1]) { vis[idx-1]=1; stack[sp++]=idx-1; }
+      if (x < N-1 && dCell[idx+1] > 0 && !vis[idx+1]) { vis[idx+1]=1; stack[sp++]=idx+1; }
+    }
+  }
+
+  const inSeeds = [], outSeeds = [];
+  for (let a = 0; a < N; a++) {
+    for (let b = 0; b < N; b++) {
+      const i0 = axis === 0 ? (0*N + a)*N + b : (axis === 1 ? (a*N + 0)*N + b : (a*N + b)*N + 0);
+      const i1 = axis === 0 ? ((N-1)*N + a)*N + b : (axis === 1 ? (a*N + (N-1))*N + b : (a*N + b)*N + (N-1));
+      if (dCell[i0] > 0) inSeeds.push(i0);
+      if (dCell[i1] > 0) outSeeds.push(i1);
+    }
+  }
+  flood(inSeeds, visIn);
+  flood(outSeeds, visOut);
+
+  const mask = new Uint8Array(total);
+  let activeCnt = 0;
+  for (let i = 0; i < total; i++) {
+    if (visIn[i] && visOut[i]) { mask[i] = 1; activeCnt++; }
+  }
+  return { mask, activeFrac: activeCnt / total, percolates: activeCnt > 0 };
+}
+
+// Exact 7-Point Harmonic-Mean Finite-Volume Solver (SOR + Conservation Flux)
+function solveAxisFV(dCellRaw, N, axis, wantField) {
+  const { mask, activeFrac, percolates } = activePercolatingMask(dCellRaw, N, axis);
+  if (!percolates) return { percolates: false, activeFrac: 0, deff: 0, tau: null, phi: null, res: 0 };
+
+  const total = N * N * N;
+  const dCell = new Float64Array(total);
+  const phi = new Float64Array(total);
+  for (let i = 0; i < total; i++) {
+    dCell[i] = mask[i] ? dCellRaw[i] : 0.0;
+    const z = (i / (N*N)) | 0, rem = i - z*N*N, y = (rem / N) | 0, x = rem - y*N;
+    const coord = axis === 0 ? z : (axis === 1 ? y : x);
+    phi[i] = mask[i] ? (coord + 0.5) / N : 0.0;
+  }
+
+  function harm(a, b) { return (a > 0 && b > 0) ? (2.0 * a * b) / (a + b) : 0.0; }
+
+  const omega = 1.68;
+  let maxDiff = 1.0;
+  for (let it = 0; it < 260 && maxDiff > 1e-6; it++) {
+    maxDiff = 0.0;
+    for (let z = 0; z < N; z++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const idx = (z*N + y)*N + x;
+          const dc = dCell[idx];
+          if (dc <= 0.0) continue;
+          let sumA = 0.0, rhs = 0.0;
+
+          // Z faces
+          if (z > 0) { const g = harm(dc, dCell[idx-N*N]); sumA += g; rhs += g * phi[idx-N*N]; }
+          else if (axis === 0) { const g = 2.0 * dc; sumA += g; rhs += g * 0.0; }
+          if (z < N-1) { const g = harm(dc, dCell[idx+N*N]); sumA += g; rhs += g * phi[idx+N*N]; }
+          else if (axis === 0) { const g = 2.0 * dc; sumA += g; rhs += g * 1.0; }
+
+          // Y faces
+          if (y > 0) { const g = harm(dc, dCell[idx-N]); sumA += g; rhs += g * phi[idx-N]; }
+          else if (axis === 1) { const g = 2.0 * dc; sumA += g; rhs += g * 0.0; }
+          if (y < N-1) { const g = harm(dc, dCell[idx+N]); sumA += g; rhs += g * phi[idx+N]; }
+          else if (axis === 1) { const g = 2.0 * dc; sumA += g; rhs += g * 1.0; }
+
+          // X faces
+          if (x > 0) { const g = harm(dc, dCell[idx-1]); sumA += g; rhs += g * phi[idx-1]; }
+          else if (axis === 2) { const g = 2.0 * dc; sumA += g; rhs += g * 0.0; }
+          if (x < N-1) { const g = harm(dc, dCell[idx+1]); sumA += g; rhs += g * phi[idx+1]; }
+          else if (axis === 2) { const g = 2.0 * dc; sumA += g; rhs += g * 1.0; }
+
+          if (sumA > 0.0) {
+            const nextP = (1.0 - omega) * phi[idx] + omega * (rhs / sumA);
+            const df = Math.abs(nextP - phi[idx]);
+            if (df > maxDiff) maxDiff = df;
+            phi[idx] = nextP;
+          }
+        }
+      }
+    }
+  }
+
+  // Boundary flux integration (h = 1, L = N, cross_area = N^2, grad_imposed = 1/N => D_eff = avg_flux / N)
+  let fluxIn = 0.0, fluxOut = 0.0;
+  for (let a = 0; a < N; a++) {
+    for (let b = 0; b < N; b++) {
+      const i0 = axis === 0 ? (0*N + a)*N + b : (axis === 1 ? (a*N + 0)*N + b : (a*N + b)*N + 0);
+      const i1 = axis === 0 ? ((N-1)*N + a)*N + b : (axis === 1 ? (a*N + (N-1))*N + b : (a*N + b)*N + (N-1));
+      if (dCell[i0] > 0) fluxIn += 2.0 * dCell[i0] * (phi[i0] - 0.0);
+      if (dCell[i1] > 0) fluxOut += 2.0 * dCell[i1] * (1.0 - phi[i1]);
+    }
+  }
+  const deff = Math.max(0.0, 0.5 * (fluxIn + fluxOut) / N);
+  const tau = deff > 1e-9 ? activeFrac / deff : null;
+  return { percolates: true, activeFrac, deff, tau, phi: wantField ? phi : null, mask, dCell, res: maxDiff };
+}
+
+function runFullPipeline(cfg) {
+  const t0 = performance.now();
+  const N = cfg.N;
+  const voxUm = cfg.voxUm;
+  const vol = generateMicrostructure(cfg.kind, N, cfg.porosity, cfg.kpa, cfg.seed);
+  const total = N * N * N;
+
+  let poreCnt = 0;
+  const dPore = new Float64Array(total);
+  const dSolid = new Float64Array(total);
+  for (let i = 0; i < total; i++) {
+    if (vol[i] === 0) { poreCnt++; dPore[i] = 1.0; }
+    else if (vol[i] === 2 && cfg.kind === 'cathode') { dPore[i] = 0.18; dSolid[i] = 1.0; }
+    else { dSolid[i] = 1.0; }
+  }
+  const porosity = poreCnt / total;
+
+  // Cauchy-Crofton 2/3 interfacial SSA [m^-1]
+  let faces = 0;
+  for (let z = 0; z < N; z++) {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const idx = (z*N + y)*N + x;
+        const p = vol[idx] === 0;
+        if (z < N-1 && (p !== (vol[idx+N*N]===0))) faces++;
+        if (y < N-1 && (p !== (vol[idx+N]===0))) faces++;
+        if (x < N-1 && (p !== (vol[idx+1]===0))) faces++;
+      }
+    }
+  }
+  const h_m = voxUm * 1e-6;
+  const ssa = (2.0 / 3.0) * (faces * h_m * h_m) / (total * h_m * h_m * h_m);
+
+  const rx = solveAxisFV(dPore, N, 2, false);
+  const ry = solveAxisFV(dPore, N, 1, false);
+  const rz = solveAxisFV(dPore, N, 0, true);
+  const rSolidZ = cfg.kind === 'open_cube' ? { percolates: false, deff: 0 } : solveAxisFV(dSolid, N, 0, false);
+
+  // Compute dimensionless cell-centred flux |J / J0| along Z
+  const flux = new Float32Array(total);
+  let jmax = 1.25;
+  if (rz.phi) {
+    const phi = rz.phi, dc = rz.dCell;
+    function harm(a, b) { return (a > 0 && b > 0) ? (2.0 * a * b) / (a + b) : 0.0; }
+    for (let z = 0; z < N; z++) {
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const idx = (z*N + y)*N + x;
+          if (dc[idx] <= 0) continue;
+          const jzL = z > 0 ? -harm(dc[idx-N*N], dc[idx])*(phi[idx]-phi[idx-N*N]) : -2.0*dc[idx]*(phi[idx]-0.0);
+          const jzR = z < N-1 ? -harm(dc[idx], dc[idx+N*N])*(phi[idx+N*N]-phi[idx]) : -2.0*dc[idx]*(1.0-phi[idx]);
+          const jyL = y > 0 ? -harm(dc[idx-N], dc[idx])*(phi[idx]-phi[idx-N]) : 0;
+          const jyR = y < N-1 ? -harm(dc[idx], dc[idx+N])*(phi[idx+N]-phi[idx]) : 0;
+          const jxL = x > 0 ? -harm(dc[idx-1], dc[idx])*(phi[idx]-phi[idx-1]) : 0;
+          const jxR = x < N-1 ? -harm(dc[idx], dc[idx+1])*(phi[idx+1]-phi[idx]) : 0;
+          const jz = 0.5*(jzL+jzR)*N, jy = 0.5*(jyL+jyR)*N, jx = 0.5*(jxL+jxR)*N;
+          const jm = Math.sqrt(jz*jz + jy*jy + jx*jx);
+          flux[idx] = jm;
+          if (jm > jmax && jm < 25) jmax = jm;
+        }
+      }
+    }
+  }
+
+  // Top-3 non-overlapping bottleneck ROIs (window w=6)
+  const w = Math.max(4, Math.floor(N / 3.5));
+  const rois = [];
+  const used = [];
+  for (let rk = 1; rk <= 3 && cfg.kind !== 'open_cube'; rk++) {
+    let bestScore = -1, bz = 0, by = 0, bx = 0, bPeak = 0, bEps = 0;
+    for (let z = 0; z <= N - w; z += 2) {
+      for (let y = 0; y <= N - w; y += 2) {
+        for (let x = 0; x <= N - w; x += 2) {
+          if (used.some(u => Math.abs(u.z-z)<w && Math.abs(u.y-y)<w && Math.abs(u.x-x)<w)) continue;
+          let sumJ2 = 0, pCnt = 0, pk = 0;
+          for (let dz = 0; dz < w; dz++) {
+            for (let dy = 0; dy < w; dy++) {
+              for (let dx = 0; dx < w; dx++) {
+                const id = ((z+dz)*N + (y+dy))*N + (x+dx);
+                if (vol[id] === 0) {
+                  pCnt++;
+                  const v = flux[id];
+                  sumJ2 += v * v;
+                  if (v > pk) pk = v;
+                }
+              }
+            }
+          }
+          const locEps = pCnt / (w*w*w);
+          if (locEps < 0.08) continue;
+          const rmsJ = Math.sqrt(sumJ2 / pCnt);
+          const constr = Math.min(5.0, Math.max(0.5, porosity / locEps));
+          const sc = rmsJ * Math.sqrt(constr);
+          if (sc > bestScore) { bestScore = sc; bz = z; by = y; bx = x; bPeak = pk; bEps = locEps; }
+        }
+      }
+    }
+    if (bestScore > 0) {
+      used.push({ z: bz, y: by, x: bx });
+      rois.push({
+        rank: rk, z0: bz, z1: bz+w, y0: by, y1: by+w, x0: bx, x1: bx+w,
+        cxUm: (bx + 0.5*w)*voxUm, cyUm: (by + 0.5*w)*voxUm, czUm: (bz + 0.5*w)*voxUm,
+        peakJ: bPeak, localEps: bEps, constr: porosity / Math.max(0.05, bEps)
+      });
+    }
+  }
+
+  // Through-thickness Z porosity profile
+  const profEps = [];
+  for (let z = 0; z < N; z++) {
+    let c = 0;
+    for (let i = z*N*N; i < (z+1)*N*N; i++) if (vol[i] === 0) c++;
+    profEps.push(c / (N*N));
+  }
+
+  // Exact 6-connected BFS Pore Network Partition + S2(r) + Directional Chords
+  const visited = new Uint8Array(total);
+  const qBuf = new Int32Array(total);
+  let percVox = 0, deadVox = 0, trapVox = 0, trapClusters = 0;
+  for (let i = 0; i < total; i++) {
+    if (vol[i] !== 0 || visited[i]) continue;
+    let qH = 0, qT = 0;
+    qBuf[qT++] = i; visited[i] = 1;
+    let touchZ0 = false, touchZN = false, cnt = 0;
+    while (qH < qT) {
+      const cur = qBuf[qH++]; cnt++;
+      const z = Math.floor(cur / (N*N));
+      const rem = cur - z*N*N;
+      const y = Math.floor(rem / N), x = rem - y*N;
+      if (z === 0) touchZ0 = true;
+      if (z === N-1) touchZN = true;
+      if (z > 0 && vol[cur-N*N]===0 && !visited[cur-N*N]) { visited[cur-N*N]=1; qBuf[qT++]=cur-N*N; }
+      if (z < N-1 && vol[cur+N*N]===0 && !visited[cur+N*N]) { visited[cur+N*N]=1; qBuf[qT++]=cur+N*N; }
+      if (y > 0 && vol[cur-N]===0 && !visited[cur-N]) { visited[cur-N]=1; qBuf[qT++]=cur-N; }
+      if (y < N-1 && vol[cur+N]===0 && !visited[cur+N]) { visited[cur+N]=1; qBuf[qT++]=cur+N; }
+      if (x > 0 && vol[cur-1]===0 && !visited[cur-1]) { visited[cur-1]=1; qBuf[qT++]=cur-1; }
+      if (x < N-1 && vol[cur+1]===0 && !visited[cur+1]) { visited[cur+1]=1; qBuf[qT++]=cur+1; }
+    }
+    if (touchZ0 && touchZN) percVox += cnt;
+    else if (touchZ0 || touchZN) deadVox += cnt;
+    else { trapVox += cnt; trapClusters++; }
+  }
+
+  // Periodic 2-point correlation S2(r) along Z and XY (exact S2(0) == porosity)
+  const maxLag = Math.floor(N / 2);
+  const s2Z = [], s2XY = [];
+  for (let lag = 0; lag <= maxLag; lag++) {
+    let hitZ = 0, hitXY = 0;
+    for (let z = 0; z < N; z++) {
+      const zn = (z + lag) % N;
+      for (let y = 0; y < N; y++) {
+        const yn = (y + lag) % N;
+        for (let x = 0; x < N; x++) {
+          const id = (z*N + y)*N + x;
+          if (vol[id] === 0) {
+            if (vol[(zn*N + y)*N + x] === 0) hitZ++;
+            if (vol[(z*N + yn)*N + x] === 0) hitXY++;
+            if (vol[(z*N + y)*N + ((x + lag) % N)] === 0) hitXY++;
+          }
+        }
+      }
+    }
+    s2Z.push(hitZ / total);
+    s2XY.push(hitXY / (2 * total));
+  }
+
+  function meanChordAxis(ax) {
+    let sumLen = 0, nCh = 0;
+    for (let a = 0; a < N; a++) {
+      for (let b = 0; b < N; b++) {
+        let run = 0;
+        for (let c = 0; c < N; c++) {
+          const id = ax===0 ? (c*N + a)*N + b : (ax===1 ? (a*N + c)*N + b : (a*N + b)*N + c);
+          if (vol[id] === 0) run++;
+          else if (run > 0) { sumLen += run; nCh++; run = 0; }
+        }
+        if (run > 0) { sumLen += run; nCh++; }
+      }
+    }
+    return nCh > 0 ? (sumLen / nCh) * voxUm : 0;
+  }
+  const morph = {
+    percFrac: percVox / total,
+    deadFrac: deadVox / total,
+    trapFrac: trapVox / total,
+    trapClusters,
+    s2Z, s2XY,
+    chordZUm: meanChordAxis(0),
+    chordYUm: meanChordAxis(1),
+    chordXUm: meanChordAxis(2),
+  };
+
+  // Effective axial Young's modulus ratio E_eff / E_0 (Gibson-Ashby / percolated solid wiring)
+  const solidFrac = Math.max(0.0, 1.0 - porosity);
+  const relStiffness = rSolidZ.percolates ? Math.min(1.0, 0.65 * rSolidZ.deff + 0.35 * Math.pow(solidFrac, 1.85)) : 0.0;
+
+  // Series Cell Resistance R_cell
+  const dTilde = Math.max(0.004, rz.deff);
+  const sigTilde = Math.max(0.016, rSolidZ.deff * 16.0);
+  const aTilde = Math.max(0.02, ssa / 1.2e5);
+  const lRatio = cfg.kind === 'carbon_felt' ? Math.max(0.22, 1.0 - strainFromKpa(cfg.kpa)) : 1.0;
+  const rCell = 0.58 / Math.pow(dTilde, 1.35) + (0.27 * lRatio) / sigTilde + 0.15 / aTilde;
+
+  const elapsedMs = performance.now() - t0;
+  return {
+    id: 'run_' + Math.random().toString(36).slice(2, 8),
+    label: cfg.label,
+    kind: cfg.kind,
+    N, voxUm, kpa: cfg.kpa, seed: cfg.seed,
+    vol, phi: rz.phi || new Float64Array(total), flux, jmax,
+    porosity, ssa,
+    rx, ry, rz,
+    solidSigmaZ: rSolidZ.deff,
+    solidPerc: rSolidZ.percolates,
+    morph, relStiffness,
+    rCell, rois, profEps,
+    resNorm: rz.res,
+    elapsedMs
+  };
+}
+
+// 1D Matérn-5/2 Gaussian Process via Cholesky in JS
+function fitGP(obsX, obsY) {
+  const lo = 20, hi = 500, span = hi - lo;
+  const n = obsX.length;
+  const yMean = obsY.reduce((a,b)=>a+b,0)/n;
+  const yVar = obsY.reduce((a,b)=>a+(b-yMean)**2,0)/n;
+  const yScale = Math.max(0.15, Math.sqrt(yVar));
+  const xn = obsX.map(v => (v - lo)/span);
+  const yn = obsY.map(v => (v - yMean)/yScale);
+  const ls = 0.26, noise = 0.002;
+
+  function kern(a, b) {
+    const d = Math.abs(a - b) / ls;
+    const s = Math.sqrt(5) * d;
+    return (1 + s + (5/3)*d*d) * Math.exp(-s);
+  }
+
+  // Cholesky K = L L^T
+  const L = Array.from({length: n}, () => new Float64Array(n));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = kern(xn[i], xn[j]) + (i === j ? noise : 0);
+      for (let k = 0; k < j; k++) sum -= L[i][k] * L[j][k];
+      L[i][j] = i === j ? Math.sqrt(Math.max(1e-12, sum)) : sum / L[j][j];
+    }
+  }
+  function solveL(rhs) {
+    const u = new Float64Array(n), x = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let s = rhs[i]; for (let k = 0; k < i; k++) s -= L[i][k]*u[k]; u[i] = s / L[i][i];
+    }
+    for (let i = n-1; i >= 0; i--) {
+      let s = u[i]; for (let k = i+1; k < n; k++) s -= L[k][i]*x[k]; x[i] = s / L[i][i];
+    }
+    return x;
+  }
+  const alpha = solveL(yn);
+  const yBest = Math.min(...obsY);
+  const grid = [], mu = [], std = [], ei = [];
+  let bestAcq = -1, nextKpa = 200, nextMean = yBest, nextStd = 0.2;
+
+  function erf(x) {
+    const s = x >= 0 ? 1 : -1; x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const y = 1 - (((((1.061405429*t - 1.453152027)*t) + 1.421413741)*t - 0.284496736)*t + 0.254829592)*t*Math.exp(-x*x);
+    return s * y;
+  }
+
+  for (let gi = 0; gi <= 96; gi++) {
+    const gx = lo + (gi / 96) * span;
+    const g = (gx - lo) / span;
+    const ks = xn.map(v => kern(g, v));
+    let mN = 0; for (let i = 0; i < n; i++) mN += ks[i] * alpha[i];
+    const u = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let s = ks[i]; for (let k = 0; k < i; k++) s -= L[i][k]*u[k]; u[i] = s / L[i][i];
+    }
+    let vDot = 0; for (let i = 0; i < n; i++) vDot += u[i]*u[i];
+    const sN = Math.sqrt(Math.max(1e-9, 1.0 - vDot));
+    const m = yMean + yScale * mN;
+    const sd = yScale * sN;
+    const imp = (yBest - 0.01*yScale) - m;
+    const z = imp / Math.max(1e-9, sd);
+    const cdf = 0.5 * (1 + erf(z / Math.SQRT2));
+    const pdf = Math.exp(-0.5*z*z) / Math.sqrt(2*Math.PI);
+    const eiVal = Math.max(0, imp * cdf + sd * pdf);
+    grid.push(gx); mu.push(m); std.push(sd); ei.push(eiVal);
+
+    const minDist = Math.min(...xn.map(v => Math.abs(v - g)));
+    const acq = minDist < 0.025 ? -1 : (eiVal > 1e-6 ? eiVal : sd * 0.01);
+    if (acq > bestAcq) { bestAcq = acq; nextKpa = Math.round(gx); nextMean = m; nextStd = sd; }
+  }
+  return { grid, mu, std, ei, nextKpa, nextMean, nextStd, yBest };
+}
+
+// State
+const runs = [];
+let activeRun = null;
+let currentTab = '2d';
+let suggestedKpa = 120;
+
+// Colormaps
+function infernoRGB(t) {
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.round(255 * Math.min(1, Math.max(0, 1.55*t + 0.35*t*t - 0.05)));
+  const g = Math.round(255 * Math.pow(t, 2.1));
+  const b = Math.round(255 * (t < 0.55 ? 1.15*t : 0.63 + 0.37*(t-0.55)/0.45 * (t > 0.85 ? 1 : 0.4)));
+  return [r, g, b];
+}
+function coolwarmRGB(t) {
+  t = Math.max(0, Math.min(1, t));
+  if (t < 0.5) {
+    const u = t * 2;
+    return [Math.round(59 + 185*u), Math.round(76 + 168*u), Math.round(192 + 53*u)];
+  }
+  const u = (t - 0.5) * 2;
+  return [Math.round(244 - 64*u), Math.round(244 - 188*u), Math.round(245 - 207*u)];
+}
+function phaseRGB(p) {
+  if (p === 0) return [15, 23, 42];
+  if (p === 1) return [100, 116, 139];
+  return [245, 158, 11];
+}
+
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    fg: cs.getPropertyValue('--foreground').trim() || '#0f172a',
+    muted: cs.getPropertyValue('--muted-foreground').trim() || '#64748b',
+    bg: cs.getPropertyValue('--card').trim() || '#ffffff',
+    border: cs.getPropertyValue('--border').trim() || '#cbd5e1',
+  };
+}
+
+function drawSliceToCanvas(canvas, run, plane, sliceIdx, layer, sharedJMax) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const tc = themeColors();
+  ctx.clearRect(0, 0, W, H);
+
+  const N = run.N;
+  const sIdx = Math.max(0, Math.min(N - 1, sliceIdx));
+  const padL = 42, padR = 54, padT = 28, padB = 34;
+  const side = Math.min(W - padL - padR, H - padT - padB);
+  const ox = padL, oy = padT;
+  const cell = side / N;
+  const jTop = sharedJMax || run.jmax;
+
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      const z = plane === 'xy' ? sIdx : r;
+      const y = plane === 'xy' ? r : (plane === 'xz' ? sIdx : c);
+      const x = plane === 'yz' ? sIdx : c;
+      const idx = (z*N + y)*N + x;
+      let rgb;
+      if (layer === 'phase') rgb = phaseRGB(run.vol[idx]);
+      else if (layer === 'pot') rgb = coolwarmRGB(run.phi[idx]);
+      else rgb = infernoRGB(run.flux[idx] / jTop);
+      ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+      ctx.fillRect(ox + c*cell, oy + (N - 1 - r)*cell, Math.ceil(cell), Math.ceil(cell));
+    }
+  }
+
+  // Overlay ROI #1 if intersecting slice
+  if (run.rois.length > 0) {
+    const roi = run.rois[0];
+    let hit = false, c0=0, c1=0, r0=0, r1=0;
+    if (plane === 'xz' && sIdx >= roi.y0 && sIdx < roi.y1) { hit=true; c0=roi.x0; c1=roi.x1; r0=roi.z0; r1=roi.z1; }
+    else if (plane === 'xy' && sIdx >= roi.z0 && sIdx < roi.z1) { hit=true; c0=roi.x0; c1=roi.x1; r0=roi.y0; r1=roi.y1; }
+    else if (plane === 'yz' && sIdx >= roi.x0 && sIdx < roi.x1) { hit=true; c0=roi.y0; c1=roi.y1; r0=roi.z0; r1=roi.z1; }
+    if (hit) {
+      ctx.save();
+      ctx.strokeStyle = '#00f5d4';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(ox + c0*cell, oy + (N - r1)*cell, (c1 - c0)*cell, (r1 - r0)*cell);
+      ctx.fillStyle = '#00f5d4';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText('ROI #1', ox + c0*cell + 2, Math.max(oy + 11, oy + (N - r1)*cell - 4));
+      ctx.restore();
+    }
+  }
+
+  // Colorbar
+  const cbX = ox + side + 12, cbW = 11;
+  for (let i = 0; i < side; i++) {
+    const t = 1.0 - i / side;
+    const rgb = layer === 'phase' ? phaseRGB(Math.round(t*2)) : (layer === 'pot' ? coolwarmRGB(t) : infernoRGB(t));
+    ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    ctx.fillRect(cbX, oy + i, cbW, 2);
+  }
+  ctx.fillStyle = tc.fg;
+  ctx.font = '11px sans-serif';
+  const topVal = layer === 'phase' ? '2' : (layer === 'pot' ? '1.0' : jTop.toFixed(1)+'×');
+  ctx.fillText(topVal, cbX + 14, oy + 9);
+  ctx.fillText('0', cbX + 14, oy + side);
+
+  ctx.font = 'bold 12px sans-serif';
+  const lName = layer === 'flux' ? '|J / J0|' : (layer === 'pot' ? 'Potential φ' : 'Phase ID');
+  ctx.fillText(`${run.label} · ${plane.toUpperCase()} (${lName})`, ox, 18);
+  ctx.fillStyle = tc.muted;
+  ctx.font = '11px sans-serif';
+  const extUm = (N * run.voxUm).toFixed(1);
+  ctx.fillText(`0 .. ${extUm} µm`, ox + side/2 - 24, oy + side + 20);
+}
+
+function render2D() {
+  if (!activeRun) return;
+  const plane = document.getElementById('planeSelect').value;
+  const layer = document.getElementById('layerSelect').value;
+  const sl = parseInt(document.getElementById('sliceSlider').value, 10);
+  document.getElementById('sliceReadout').textContent = `${sl} (${(sl * activeRun.voxUm).toFixed(1)}µm)`;
+  drawSliceToCanvas(document.getElementById('sliceCanvas'), activeRun, plane, sl, layer, null);
+
+  // Directional bar chart
+  const bc = document.getElementById('barCanvas');
+  const bctx = bc.getContext('2d');
+  const tc = themeColors();
+  bctx.clearRect(0, 0, bc.width, bc.height);
+  bctx.fillStyle = tc.fg;
+  bctx.font = 'bold 12px sans-serif';
+  bctx.fillText('Directional Tortuosity τ & D_eff/D_0', 14, 18);
+  const dirs = [['X', activeRun.rx], ['Y', activeRun.ry], ['Z', activeRun.rz]];
+  const maxTau = Math.max(2.2, ...dirs.map(d => d[1].tau || 0));
+  dirs.forEach(([lbl, r], idx) => {
+    const bx = 38 + idx * 92, base = 142, maxH = 100;
+    const hTau = ((r.tau || 0) / maxTau) * maxH;
+    const hDeff = (r.deff / maxTau) * maxH;
+    bctx.fillStyle = '#3b82f6';
+    bctx.fillRect(bx, base - hTau, 26, hTau);
+    bctx.fillStyle = '#14b8a6';
+    bctx.fillRect(bx + 30, base - hDeff, 26, hDeff);
+    bctx.fillStyle = tc.fg;
+    bctx.font = '11px monospace';
+    bctx.fillText(r.tau ? r.tau.toFixed(2) : '—', bx - 2, base - hTau - 4);
+    bctx.fillText(r.deff.toFixed(2), bx + 28, base - hDeff - 4);
+    bctx.font = 'bold 11px sans-serif';
+    bctx.fillText(lbl, bx + 22, base + 15);
+  });
+
+  // Through-thickness Z profile
+  const pc = document.getElementById('profCanvas');
+  const pctx = pc.getContext('2d');
+  pctx.clearRect(0, 0, pc.width, pc.height);
+  pctx.fillStyle = tc.fg;
+  pctx.font = 'bold 12px sans-serif';
+  pctx.fillText('Through-Thickness Porosity ε(z)', 14, 18);
+  const ox = 36, oy = 28, w = pc.width - 50, h = pc.height - 52;
+  pctx.strokeStyle = tc.border;
+  pctx.strokeRect(ox, oy, w, h);
+  pctx.beginPath();
+  activeRun.profEps.forEach((v, i) => {
+    const px = ox + (i / Math.max(1, activeRun.N - 1)) * w;
+    const py = oy + (1.0 - v) * h;
+    if (i === 0) pctx.moveTo(px, py); else pctx.lineTo(px, py);
+  });
+  pctx.strokeStyle = '#38bdf8';
+  pctx.lineWidth = 2;
+  pctx.stroke();
+  // Bulk dashed line
+  const by = oy + (1.0 - activeRun.porosity) * h;
+  pctx.save();
+  pctx.setLineDash([4, 3]);
+  pctx.strokeStyle = '#ef4444';
+  pctx.beginPath(); pctx.moveTo(ox, by); pctx.lineTo(ox + w, by); pctx.stroke();
+  pctx.restore();
+  pctx.fillStyle = tc.muted;
+  pctx.font = '11px sans-serif';
+  pctx.fillText('z [0 → L]', ox + w/2 - 22, oy + h + 16);
+}
+
+// Interactive 3D Isometric Voxel Cutaway Renderer
+function render3D() {
+  if (!activeRun) return;
+  const c = document.getElementById('isoCanvas');
+  const ctx = c.getContext('2d');
+  const tc = themeColors();
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  const N = activeRun.N;
+  const yaw = parseFloat(document.getElementById('yawSlider').value) * Math.PI / 180;
+  const pitch = 0.52;
+  const cutZ = Math.round(N * parseFloat(document.getElementById('cutZSlider').value) / 100);
+  const cutX = Math.round(N * parseFloat(document.getElementById('cutXSlider').value) / 100);
+  const scale = Math.min(c.width, c.height) / (N * 1.95);
+  const cx0 = c.width / 2, cy0 = c.height * 0.54;
+  const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+  const cosP = Math.cos(pitch), sinP = Math.sin(pitch);
+
+  function proj(x, y, z) {
+    const dx = x - N/2, dy = y - N/2, dz = z - N/2;
+    const rx = dx * cosY - dy * sinY;
+    const ry = dx * sinY + dy * cosY;
+    const sx = cx0 + rx * scale;
+    const sy = cy0 - (dz * cosP - ry * sinP) * scale;
+    const depth = ry * cosP + dz * sinP;
+    return [sx, sy, depth];
+  }
+
+  // Collect exposed solid voxel faces for painter's sort
+  const quads = [];
+  const vol = activeRun.vol;
+  function solidAt(x, y, z) {
+    if (x < 0 || x >= cutX || y < 0 || y >= N || z < 0 || z >= cutZ) return 0;
+    return vol[(z*N + y)*N + x];
+  }
+
+  for (let z = 0; z < cutZ; z++) {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < cutX; x++) {
+        const p = vol[(z*N + y)*N + x];
+        if (p === 0) continue;
+        const base = p === 1 ? [100, 116, 139] : [245, 158, 11];
+        if (!solidAt(x, y, z+1)) quads.push({ pts: [[x,y,z+1],[x+1,y,z+1],[x+1,y+1,z+1],[x,y+1,z+1]], sh: 1.05, base });
+        if (!solidAt(x+1, y, z)) quads.push({ pts: [[x+1,y,z],[x+1,y+1,z],[x+1,y+1,z+1],[x+1,y,z+1]], sh: 0.86, base });
+        if (!solidAt(x-1, y, z)) quads.push({ pts: [[x,y,z],[x,y,z+1],[x,y+1,z+1],[x,y+1,z]], sh: 0.78, base });
+        if (!solidAt(x, y+1, z)) quads.push({ pts: [[x,y+1,z],[x+1,y+1,z],[x+1,y+1,z+1],[x,y+1,z+1]], sh: 0.72, base });
+        if (!solidAt(x, y-1, z)) quads.push({ pts: [[x,y,z],[x+1,y,z],[x+1,y,z+1],[x,y,z+1]], sh: 0.92, base });
+      }
+    }
+  }
+
+  if (quads.length === 0) {
+    ctx.fillStyle = tc.muted;
+    ctx.font = '13px sans-serif';
+    ctx.fillText('Uniform open pore space (0 solid voxels — analytical τ = 1.0000 cube)', 95, c.height / 2);
+    return;
+  }
+
+  const mapped = quads.map(q => {
+    const pp = q.pts.map(pt => proj(pt[0], pt[1], pt[2]));
+    const d = (pp[0][2] + pp[1][2] + pp[2][2] + pp[3][2]) * 0.25;
+    return { pp, d, col: `rgb(${Math.min(255,Math.round(q.base[0]*q.sh))},${Math.min(255,Math.round(q.base[1]*q.sh))},${Math.min(255,Math.round(q.base[2]*q.sh))})` };
+  });
+  mapped.sort((a, b) => a.d - b.d);
+
+  for (let i = 0; i < mapped.length; i++) {
+    const m = mapped[i];
+    ctx.beginPath();
+    ctx.moveTo(m.pp[0][0], m.pp[0][1]);
+    ctx.lineTo(m.pp[1][0], m.pp[1][1]);
+    ctx.lineTo(m.pp[2][0], m.pp[2][1]);
+    ctx.lineTo(m.pp[3][0], m.pp[3][1]);
+    ctx.closePath();
+    ctx.fillStyle = m.col;
+    ctx.fill();
+  }
+
+  // Draw ROI #1 3D wireframe
+  if (document.getElementById('showRoi3D').checked && activeRun.rois.length > 0) {
+    const r = activeRun.rois[0];
+    const edges = [
+      [[r.x0,r.y0,r.z0],[r.x1,r.y0,r.z0]], [[r.x1,r.y0,r.z0],[r.x1,r.y1,r.z0]],
+      [[r.x1,r.y1,r.z0],[r.x0,r.y1,r.z0]], [[r.x0,r.y1,r.z0],[r.x0,r.y0,r.z0]],
+      [[r.x0,r.y0,r.z1],[r.x1,r.y0,r.z1]], [[r.x1,r.y0,r.z1],[r.x1,r.y1,r.z1]],
+      [[r.x1,r.y1,r.z1],[r.x0,r.y1,r.z1]], [[r.x0,r.y1,r.z1],[r.x0,r.y0,r.z1]],
+      [[r.x0,r.y0,r.z0],[r.x0,r.y0,r.z1]], [[r.x1,r.y0,r.z0],[r.x1,r.y0,r.z1]],
+      [[r.x1,r.y1,r.z0],[r.x1,r.y1,r.z1]], [[r.x0,r.y1,r.z0],[r.x0,r.y1,r.z1]]
+    ];
+    ctx.strokeStyle = '#00f5d4';
+    ctx.lineWidth = 2.2;
+    edges.forEach(([a, b]) => {
+      const pa = proj(a[0], a[1], a[2]), pb = proj(b[0], b[1], b[2]);
+      ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke();
+    });
+  }
+}
+
+// Drag orbit on 3D canvas
+(function setupOrbit() {
+  const c = document.getElementById('isoCanvas');
+  let dragging = false, lastX = 0;
+  c.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; });
+  window.addEventListener('pointerup', () => { dragging = false; });
+  window.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const sl = document.getElementById('yawSlider');
+    let next = parseFloat(sl.value) + (e.clientX - lastX) * 0.8;
+    if (next > 180) next -= 360;
+    if (next < -180) next += 360;
+    sl.value = Math.round(next);
+    lastX = e.clientX;
+    render3D();
+  });
+})();
+
+function renderCompare() {
+  if (runs.length === 0) return;
+  const lId = document.getElementById('cmpLeftSel').value;
+  const rId = document.getElementById('cmpRightSel').value;
+  const layer = document.getElementById('cmpLayerSel').value;
+  const rL = runs.find(r => r.id === lId) || runs[0];
+  const rR = runs.find(r => r.id === rId) || runs[runs.length - 1];
+  const sharedJ = Math.max(rL.jmax, rR.jmax);
+
+  drawSliceToCanvas(document.getElementById('cmpLeftCanvas'), rL, 'xz', Math.floor(rL.N/2), layer, sharedJ);
+  drawSliceToCanvas(document.getElementById('cmpRightCanvas'), rR, 'xz', Math.floor(rR.N/2), layer, sharedJ);
+
+  const dPor = rR.porosity - rL.porosity;
+  const dTau = (rR.rz.tau && rL.rz.tau) ? (rR.rz.tau - rL.rz.tau).toFixed(3) : '—';
+  const dRc = (rR.rCell - rL.rCell).toFixed(3);
+  document.getElementById('cmpTableWrap').innerHTML = `
+    <table class="w-full border-collapse">
+      <thead><tr class="border-b border-[var(--card-border)] text-[var(--muted-foreground)] text-left">
+        <th class="py-1.5 px-2">Metric</th><th class="py-1.5 px-2">Left: ${rL.label}</th><th class="py-1.5 px-2">Right: ${rR.label}</th><th class="py-1.5 px-2">Delta (R − L)</th>
+      </tr></thead>
+      <tbody class="font-mono">
+        <tr class="border-b border-[var(--card-border)]"><td class="py-1.5 px-2 font-sans">Porosity ε</td><td class="py-1.5 px-2">${rL.porosity.toFixed(4)}</td><td class="py-1.5 px-2">${rR.porosity.toFixed(4)}</td><td class="py-1.5 px-2">${dPor>=0?'+':''}${dPor.toFixed(4)}</td></tr>
+        <tr class="border-b border-[var(--card-border)]"><td class="py-1.5 px-2 font-sans">Through-Plane τ_Z</td><td class="py-1.5 px-2">${rL.rz.tau?rL.rz.tau.toFixed(3):'—'}</td><td class="py-1.5 px-2">${rR.rz.tau?rR.rz.tau.toFixed(3):'—'}</td><td class="py-1.5 px-2">${dTau}</td></tr>
+        <tr><td class="py-1.5 px-2 font-sans">Cell Resistance R_cell</td><td class="py-1.5 px-2">${rL.rCell.toFixed(3)}</td><td class="py-1.5 px-2">${rR.rCell.toFixed(3)}</td><td class="py-1.5 px-2 font-bold">${dRc}</td></tr>
+      </tbody>
+    </table>`;
+}
+
+function buildGreyscaleXctVolume(N, seed) {
+  const rng = mulberry32((seed + 1337) >>> 0);
+  const g = new Uint8Array(N * N * N);
+  const sph = [];
+  for (let i = 0; i < 42; i++) sph.push([rng()*N, rng()*N, rng()*N, 2.2 + rng()*1.6]);
+  for (let z = 0; z < N; z++) {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        let isSolid = false;
+        for (let k = 0; k < sph.length; k++) {
+          const s = sph[k];
+          if ((z-s[0])**2 + (y-s[1])**2 + (x-s[2])**2 <= s[3]*s[3]) { isSolid = true; break; }
+        }
+        const base = isSolid ? 185 : 52;
+        const val = Math.max(0, Math.min(255, Math.round(base + randn(rng) * 20)));
+        g[(z*N + y)*N + x] = val;
+      }
+    }
+  }
+  return g;
+}
+
+function computeOtsuU8(arr) {
+  const hist = new Float64Array(256);
+  for (let i = 0; i < arr.length; i++) hist[arr[i]]++;
+  const total = arr.length;
+  let sumAll = 0;
+  for (let t = 0; t < 256; t++) sumAll += t * hist[t];
+  let sumB = 0, wB = 0, varMax = -1, bestT = 122;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sumAll - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > varMax) { varMax = between; bestT = t; }
+  }
+  return bestT;
+}
+
+function onXctPreviewChange(useOtsu) {
+  const N = parseInt(document.getElementById('gridSlider').value, 10) || 22;
+  const seed = parseInt(document.getElementById('seedInput').value, 10) || 42;
+  const grey = buildGreyscaleXctVolume(N, seed);
+  let thr = parseInt(document.getElementById('thrSlider').value, 10);
+  if (useOtsu) {
+    thr = computeOtsuU8(grey);
+    document.getElementById('thrSlider').value = thr;
+  }
+  const darkIsPore = document.getElementById('polSelect').value !== 'bright';
+  document.getElementById('thrReadout').textContent = thr + (useOtsu ? ' (Otsu)' : '');
+
+  const c = document.getElementById('xctPrevCanvas');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const tc = themeColors();
+  const midY = Math.floor(N / 2);
+  const cell = Math.floor(72 / N);
+  for (let z = 0; z < N; z++) {
+    for (let x = 0; x < N; x++) {
+      const v = grey[(z*N + midY)*N + x];
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(6 + x*cell, 6 + (N-1-z)*cell, cell, cell);
+      const isPore = darkIsPore ? (v <= thr) : (v > thr);
+      ctx.fillStyle = isPore ? '#0f172a' : '#38bdf8';
+      ctx.fillRect(88 + x*cell, 6 + (N-1-z)*cell, cell, cell);
+    }
+  }
+  // Mini histogram on right
+  const bins = new Int32Array(32);
+  let bMax = 1;
+  for (let i = 0; i < grey.length; i++) { const b = grey[i] >> 3; bins[b]++; if (bins[b] > bMax) bMax = bins[b]; }
+  for (let b = 0; b < 32; b++) {
+    const bh = Math.round((bins[b] / bMax) * 68);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fillRect(170 + b*2, 78 - bh, 1.8, bh);
+  }
+  const tx = 170 + (thr / 255) * 64;
+  ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(tx, 8); ctx.lineTo(tx, 78); ctx.stroke();
+  ctx.fillStyle = tc.muted; ctx.font = '10px sans-serif';
+  ctx.fillText('Raw', 6, 95); ctx.fillText('Mask', 88, 95); ctx.fillText('Histogram', 170, 95);
+}
+
+function getRegimeParams() {
+  return {
+    wIon: parseFloat(document.getElementById('wIonSlider')?.value || '0.58'),
+    wElec: parseFloat(document.getElementById('wElecSlider')?.value || '0.27'),
+    wKin: parseFloat(document.getElementById('wKinSlider')?.value || '0.15'),
+    sigKap: parseFloat(document.getElementById('sigKapSlider')?.value || '16')
+  };
+}
+
+function liveRcell(r) {
+  const reg = getRegimeParams();
+  const dTilde = Math.max(0.004, r.rz.deff);
+  const sigEff = r.solidSigmaZ > 0 ? r.solidSigmaZ : 0.015;
+  const sigTilde = Math.max(0.016, sigEff * reg.sigKap);
+  const aTilde = Math.max(0.02, r.ssa / 1.2e5);
+  const lRatio = r.kind === 'carbon_felt' ? Math.max(0.22, 1.0 - strainFromKpa(r.kpa)) : 1.0;
+  return reg.wIon / Math.pow(dTilde, 1.35) + (reg.wElec * lRatio) / sigTilde + reg.wKin / aTilde;
+}
+
+function onRegimeChange() {
+  const reg = getRegimeParams();
+  document.getElementById('wIonVal').textContent = reg.wIon.toFixed(2);
+  document.getElementById('wElecVal').textContent = reg.wElec.toFixed(2);
+  document.getElementById('wKinVal').textContent = reg.wKin.toFixed(2);
+  document.getElementById('sigKapVal').textContent = Math.round(reg.sigKap);
+  runs.forEach(r => { r.rCell = liveRcell(r); });
+  updateKPIs();
+  renderTwin();
+}
+
+function jumpToRoi1() {
+  if (activeRun && activeRun.rois.length > 0) {
+    document.getElementById('planeSelect').value = 'xz';
+    document.getElementById('layerSelect').value = 'flux';
+    document.getElementById('sliceSlider').value = Math.floor((activeRun.rois[0].y0 + activeRun.rois[0].y1) / 2);
+  }
+  switchTab('2d');
+}
+
+function resetCampaign() {
+  runs.length = 0;
+  [35, 410, 150].forEach(kpa => {
+    const r = runFullPipeline({ kind: 'carbon_felt', label: `Carbon Felt (${kpa} kPa)`, N: 22, voxUm: 1.6, kpa, porosity: 0.84, seed: 42, role: 'negative' });
+    r.rCell = liveRcell(r);
+    runs.push(r);
+    activeRun = r;
+  });
+  renderAll();
+}
+
+function renderTwin() {
+  const src = runs.filter(r => r.kind === 'carbon_felt');
+  const tc = themeColors();
+  const c = document.getElementById('gpCanvas');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  if (src.length >= 2) {
+    const ys = src.map(r => liveRcell(r));
+    const gp = fitGP(src.map(r => r.kpa), ys);
+    suggestedKpa = gp.nextKpa;
+    document.getElementById('gpHeadline').textContent = `Next Recommended Operando Scan: ${gp.nextKpa} kPa`;
+    document.getElementById('gpSubline').textContent = `Predicted R_cell = ${gp.nextMean.toFixed(3)} ± ${(1.96*gp.nextStd).toFixed(3)} · Current best R_cell = ${gp.yBest.toFixed(3)}`;
+
+    const ox = 46, w = c.width - 62;
+    const topY = 24, topH = 185;
+    const botY = 236, botH = 70;
+    const allHi = gp.mu.map((m, i) => m + 1.96*gp.std[i]);
+    const allLo = gp.mu.map((m, i) => m - 1.96*gp.std[i]);
+    const yMin = Math.min(...allLo, ...ys) * 0.9;
+    const yMax = Math.max(...allHi, ...ys) * 1.05;
+
+    const mapX = v => ox + ((v - 20) / 480) * w;
+    const mapY = v => topY + (1.0 - (v - yMin) / Math.max(0.1, yMax - yMin)) * topH;
+
+    ctx.strokeStyle = tc.border;
+    ctx.strokeRect(ox, topY, w, topH);
+    ctx.strokeRect(ox, botY, w, botH);
+
+    // 95% GP band
+    ctx.beginPath();
+    gp.grid.forEach((gx, i) => { const x = mapX(gx), y = mapY(allHi[i]); if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    for (let i = gp.grid.length - 1; i >= 0; i--) ctx.lineTo(mapX(gp.grid[i]), mapY(allLo[i]));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.22)';
+    ctx.fill();
+
+    // GP Mean
+    ctx.beginPath();
+    gp.grid.forEach((gx, i) => { const x = mapX(gx), y = mapY(gp.mu[i]); if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2.2; ctx.stroke();
+
+    // Suggested vertical line
+    const sx = mapX(gp.nextKpa);
+    ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = '#10b981'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(sx, topY); ctx.lineTo(sx, topY + topH); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx, botY); ctx.lineTo(sx, botY + botH); ctx.stroke();
+    ctx.restore();
+
+    // Observed points
+    src.forEach((r, idx) => {
+      ctx.beginPath(); ctx.arc(mapX(r.kpa), mapY(ys[idx]), 5, 0, 2*Math.PI);
+      ctx.fillStyle = '#f59e0b'; ctx.fill();
+      ctx.strokeStyle = tc.fg; ctx.lineWidth = 1.2; ctx.stroke();
+    });
+
+    // EI curve
+    const eiMax = Math.max(1e-5, ...gp.ei);
+    ctx.beginPath();
+    gp.grid.forEach((gx, i) => {
+      const x = mapX(gx), y = botY + (1.0 - gp.ei[i] / eiMax) * botH;
+      if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.fillStyle = tc.fg; ctx.font = 'bold 11.5px sans-serif';
+    ctx.fillText('GP Posterior R_cell(σ) & 95% Band', ox + 6, topY - 6);
+    ctx.fillText('Expected Improvement EI(σ)', ox + 6, botY - 6);
+    ctx.fillStyle = tc.muted; ctx.font = '11px sans-serif';
+    ctx.fillText('20 kPa', ox, botY + botH + 15);
+    ctx.fillText('260 kPa', ox + w/2 - 20, botY + botH + 15);
+    ctx.fillText('500 kPa', ox + w - 42, botY + botH + 15);
+  }
+
+  // ROI table
+  if (activeRun && activeRun.rois.length > 0) {
+    document.getElementById('roiTableWrap').innerHTML = `
+      <table class="w-full border-collapse">
+        <thead><tr class="border-b border-[var(--card-border)] text-[var(--muted-foreground)] text-left">
+          <th class="py-1">ROI</th><th class="py-1">Centre (x,y,z)</th><th class="py-1">Peak |J|</th><th class="py-1">Local ε</th>
+        </tr></thead>
+        <tbody class="font-mono">
+          ${activeRun.rois.map(r => `<tr class="border-b border-[var(--card-border)]">
+            <td class="py-1">#${r.rank}</td>
+            <td class="py-1">(${r.cxUm.toFixed(0)},${r.cyUm.toFixed(0)},${r.czUm.toFixed(0)})µm</td>
+            <td class="py-1">${r.peakJ.toFixed(2)}×</td>
+            <td class="py-1">${r.localEps.toFixed(2)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } else {
+    document.getElementById('roiTableWrap').innerHTML = `<div class="text-[var(--muted-foreground)]">Uniform open domain — no localised bottlenecks.</div>`;
+  }
+
+  document.getElementById('histTableWrap').innerHTML = `
+    <table class="w-full border-collapse">
+      <thead><tr class="border-b border-[var(--card-border)] text-[var(--muted-foreground)] text-left">
+        <th class="py-1">Run</th><th class="py-1">Setpoint</th><th class="py-1">ε</th><th class="py-1">R_cell</th>
+      </tr></thead>
+      <tbody class="font-mono">
+        ${runs.map(r => `<tr onclick="selectRun('${r.id}')" class="border-b border-[var(--card-border)] cursor-pointer hover:opacity-80">
+          <td class="py-1 font-sans">${r.label}</td>
+          <td class="py-1">${r.kind === 'carbon_felt' ? r.kpa+'kPa' : 'ε='+r.porosity.toFixed(2)}</td>
+          <td class="py-1">${r.porosity.toFixed(3)}</td>
+          <td class="py-1 font-bold">${liveRcell(r).toFixed(3)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function updateKPIs() {
+  if (!activeRun) return;
+  const r = activeRun;
+  r.rCell = liveRcell(r);
+  document.getElementById('originPill').textContent = `origin: ${r.kind === 'xct_grey' ? 'user_upload' : 'synthetic'} · role: ${r.role || 'negative'}`;
+  document.getElementById('activeTitle').textContent = r.label;
+  document.getElementById('gridPill').textContent = `${r.N}×${r.N}×${r.N} @ ${r.voxUm.toFixed(1)} µm`;
+  document.getElementById('convBadge').textContent = `Solved in ${r.elapsedMs.toFixed(0)} ms · Δφ=${r.resNorm.toExponential(1)}`;
+  document.getElementById('solveTiming').textContent = `Last 3-axis FV solve: ${r.elapsedMs.toFixed(0)} ms`;
+
+  document.getElementById('kpiPor').textContent = r.porosity.toFixed(4);
+  document.getElementById('kpiPorSub').textContent = `${(r.porosity*100).toFixed(1)}% volume`;
+  document.getElementById('kpiTauZ').textContent = r.rz.tau ? r.rz.tau.toFixed(3) : 'No perc.';
+  const txy = (r.rx.tau && r.ry.tau) ? 0.5*(r.rx.tau + r.ry.tau) : null;
+  document.getElementById('kpiAniso').textContent = (txy && r.rz.tau) ? `τ_xy=${txy.toFixed(2)} (${(r.rz.tau/txy).toFixed(2)}×)` : 'Isotropic';
+  document.getElementById('kpiDeff').textContent = r.rz.deff.toFixed(3);
+  document.getElementById('kpiMac').textContent = r.rz.deff > 0 ? `N_M = ${(1/r.rz.deff).toFixed(2)}` : 'Blocked';
+  document.getElementById('kpiSSA').textContent = Math.round(r.ssa).toLocaleString();
+  document.getElementById('kpiSig').textContent = r.solidSigmaZ.toFixed(3);
+  document.getElementById('kpiSigSub').textContent = r.solidPerc ? 'Through-plane wired' : 'Unpercolated';
+  document.getElementById('kpiRcell').textContent = r.rCell.toFixed(3);
+
+  const sl = document.getElementById('sliceSlider');
+  sl.max = r.N - 1;
+  if (parseInt(sl.value, 10) >= r.N) sl.value = Math.floor(r.N / 2);
+
+  // Sync compare dropdowns
+  const opts = runs.map(x => `<option value="${x.id}">${x.label} (R=${liveRcell(x).toFixed(2)})</option>`).join('');
+  const lSel = document.getElementById('cmpLeftSel'), rSel = document.getElementById('cmpRightSel');
+  const prevL = lSel.value, prevR = rSel.value;
+  lSel.innerHTML = opts; rSel.innerHTML = opts;
+  lSel.value = runs.some(x=>x.id===prevL) ? prevL : runs[0].id;
+  rSel.value = runs.some(x=>x.id===prevR) ? prevR : runs[runs.length-1].id;
+}
+
+function evaluateElectrochemJS(run, chemKey) {
+  const chems = {
+    nmc811: { vLow: 3.00, c0: 1000, d0: 2.6e-10, kap0: 1.05, sig0: 42, tPlus: 0.38, i0: 1.5, qMah: 3.5, lMinUm: 75, ocv: s => 3.42 + 0.76*s - 0.12*s*(1-s) - 0.28*Math.exp(-20*s) },
+    lfp:    { vLow: 2.50, c0: 1200, d0: 3.2e-10, kap0: 1.18, sig0: 55, tPlus: 0.38, i0: 2.1, qMah: 2.8, lMinUm: 65, ocv: s => 3.32 + 0.045*(s-0.5) - 0.52*Math.exp(-26*s) + 0.16*Math.exp(-22*(1-s)) },
+    vanadium: { vLow: 0.90, c0: 1600, d0: 3.9e-10, kap0: 24.0, sig0: 380, tPlus: 0.70, i0: 4.2, qMah: 8.0, lMinUm: 105, ocv: s => 1.39 + 0.0514*Math.log(Math.max(0.01,s)/Math.max(0.01,1-s)) }
+  };
+  const ch = chems[chemKey] || chems.nmc811;
+  const lM = Math.max(run.N * run.voxUm, ch.lMinUm) * 1e-6;
+  const dRel = Math.max(1e-4, run.rz.deff);
+  const sigRel = Math.max(0.012, run.solidSigmaZ);
+  const aS = Math.max(2.5e4, run.ssa);
+  const dEff = ch.d0 * dRel, kapEff = ch.kap0 * dRel, sigEff = ch.sig0 * sigRel;
+  const jLim = (3.0 * 96485.3 * dEff * ch.c0) / ((1.0 - ch.tPlus) * lM); // A/m2
+  const i1C = ch.qMah * 10.0;
+  const cLim = jLim / i1C;
+  const rates = [0.5, 1.0, 2.0, 4.0];
+  const curves = rates.map(cr => {
+    const iApp = cr * i1C;
+    const dvIon = (iApp * lM) / (3.0 * kapEff);
+    const dvElec = (iApp * lM) / (3.0 * sigEff);
+    const dvKin = 2.0 * 0.02569 * Math.asinh(iApp / (2.0 * lM * aS * ch.i0));
+    const pts = [];
+    let midConc = 0;
+    for (let k = 0; k <= 50; k++) {
+      const u = (k / 50) * 0.99;
+      const ratio = Math.min(0.992, (iApp / Math.max(jLim, 1e-6)) * (0.35 + 0.85 * u));
+      const dvConc = (2.0 * 0.02569 * (1.0 - ch.tPlus)) * (-Math.log(Math.max(0.008, 1.0 - ratio)));
+      if (k === 25) midConc = dvConc;
+      const v = ch.ocv(1.0 - u) - dvIon - dvElec - dvKin - dvConc;
+      if (v < ch.vLow) { pts.push({ q: u * 100, v: ch.vLow }); break; }
+      pts.push({ q: u * 100, v });
+    }
+    return { cr, pts, accPct: pts.length ? pts[pts.length-1].q : 0, dvIon: dvIon*1000, dvElec: dvElec*1000, dvKin: dvKin*1000, dvConc: midConc*1000 };
+  });
+  return { ch, cLim, jLimMa: jLim / 10.0, curves };
+}
+
+function renderMorphology() {
+  if (!activeRun || !activeRun.morph) return;
+  const m = activeRun.morph;
+  const tc = themeColors();
+  document.getElementById('morphKpiRow').innerHTML = `
+    <div class="bg-[var(--background)] border border-[var(--card-border)] rounded p-2"><div class="text-[var(--muted-foreground)]">Percolating Pore</div><div class="font-mono font-bold text-base">${(m.percFrac*100).toFixed(1)}%</div></div>
+    <div class="bg-[var(--background)] border border-[var(--card-border)] rounded p-2"><div class="text-[var(--muted-foreground)]">Dead-End Pore</div><div class="font-mono font-bold text-base">${(m.deadFrac*100).toFixed(1)}%</div></div>
+    <div class="bg-[var(--background)] border border-[var(--card-border)] rounded p-2"><div class="text-[var(--muted-foreground)]">Isolated / Trapped</div><div class="font-mono font-bold text-base">${(m.trapFrac*100).toFixed(2)}% (${m.trapClusters})</div></div>
+    <div class="bg-[var(--background)] border border-[var(--card-border)] rounded p-2"><div class="text-[var(--muted-foreground)]">Mean Chords (Z / XY)</div><div class="font-mono font-bold text-base">${m.chordZUm.toFixed(1)} / ${(0.5*(m.chordXUm+m.chordYUm)).toFixed(1)} µm</div></div>
+  `;
+
+  // Left canvas: Pore Network Partition Bars
+  const c1 = document.getElementById('morphConnCanvas'), x1 = c1.getContext('2d');
+  x1.clearRect(0, 0, c1.width, c1.height);
+  x1.fillStyle = tc.fg; x1.font = 'bold 12px sans-serif';
+  x1.fillText('6-Connected Pore Network Partition [% Volume]', 16, 20);
+  const items = [
+    { name: 'Percolating', val: m.percFrac * 100, col: '#10b981' },
+    { name: 'Dead-End', val: m.deadFrac * 100, col: '#f59e0b' },
+    { name: 'Trapped', val: m.trapFrac * 100, col: '#ef4444' },
+    { name: 'Solid Matrix', val: (1 - activeRun.porosity) * 100, col: '#64748b' }
+  ];
+  items.forEach((it, idx) => {
+    const y = 44 + idx * 48;
+    x1.fillStyle = tc.fg; x1.font = '11px sans-serif';
+    x1.fillText(`${it.name} (${it.val.toFixed(1)}%)`, 16, y);
+    x1.fillStyle = 'rgba(148,163,184,0.18)';
+    x1.fillRect(16, y + 6, c1.width - 36, 18);
+    x1.fillStyle = it.col;
+    x1.fillRect(16, y + 6, Math.max(2, ((c1.width - 36) * it.val) / 100), 18);
+  });
+
+  // Right canvas: S2(r) along Z vs XY
+  const c2 = document.getElementById('morphS2Canvas'), x2 = c2.getContext('2d');
+  x2.clearRect(0, 0, c2.width, c2.height);
+  x2.fillStyle = tc.fg; x2.font = 'bold 12px sans-serif';
+  x2.fillText('2-Point Correlation S₂(r) · Z vs XY [S₂(0) = ε]', 16, 20);
+  const ox = 44, oy = 34, w = c2.width - 60, h = c2.height - 64;
+  x2.strokeStyle = tc.border; x2.strokeRect(ox, oy, w, h);
+  const yMax = Math.max(0.15, activeRun.porosity * 1.05);
+  const yMin = Math.max(0, activeRun.porosity * activeRun.porosity * 0.75);
+  const mapY = v => oy + (1 - (v - yMin) / Math.max(0.02, yMax - yMin)) * h;
+  // Asymptote eps^2
+  const yAsym = mapY(activeRun.porosity * activeRun.porosity);
+  x2.save(); x2.setLineDash([4, 3]); x2.strokeStyle = tc.muted;
+  x2.beginPath(); x2.moveTo(ox, yAsym); x2.lineTo(ox + w, yAsym); x2.stroke(); x2.restore();
+  function drawS2(arr, col) {
+    x2.beginPath();
+    arr.forEach((v, i) => {
+      const px = ox + (i / Math.max(1, arr.length - 1)) * w, py = mapY(v);
+      if (i === 0) x2.moveTo(px, py); else x2.lineTo(px, py);
+    });
+    x2.strokeStyle = col; x2.lineWidth = 2.2; x2.stroke();
+  }
+  drawS2(m.s2Z, '#3b82f6');
+  drawS2(m.s2XY, '#10b981');
+  x2.fillStyle = '#3b82f6'; x2.font = '11px sans-serif'; x2.fillText('— S₂,Z(r)', ox + w - 125, oy + 16);
+  x2.fillStyle = '#10b981'; x2.fillText('— S₂,XY(r)', ox + w - 65, oy + 16);
+  x2.fillStyle = tc.muted; x2.fillText('r = 0', ox, oy + h + 16);
+  x2.fillText(`r = ${((m.s2Z.length-1)*activeRun.voxUm).toFixed(1)} µm`, ox + w - 64, oy + h + 16);
+}
+
+function renderElectrochem() {
+  if (!activeRun) return;
+  const chemKey = document.getElementById('chemSelect')?.value || 'nmc811';
+  const ec = evaluateElectrochemJS(activeRun, chemKey);
+  activeRun.cLim = ec.cLim;
+  const tc = themeColors();
+  document.getElementById('echemBanner').textContent = `J_lim = ${ec.jLimMa.toFixed(1)} mA/cm² · C_lim = ${ec.cLim.toFixed(2)}C · E_eff/E_0 = ${(activeRun.relStiffness*100).toFixed(1)}%`;
+
+  // Left: V(Q) discharge curves
+  const c1 = document.getElementById('echemCurveCanvas'), x1 = c1.getContext('2d');
+  x1.clearRect(0, 0, c1.width, c1.height);
+  x1.fillStyle = tc.fg; x1.font = 'bold 12px sans-serif';
+  x1.fillText('Galvanostatic Discharge V(Q) [0.5C – 4C]', 16, 20);
+  const ox = 44, oy = 34, w = c1.width - 60, h = c1.height - 64;
+  x1.strokeStyle = tc.border; x1.strokeRect(ox, oy, w, h);
+  const vLo = ec.ch.vLow - 0.05;
+  const vHi = Math.max(...ec.curves[0].pts.map(p => p.v)) + 0.08;
+  const cols = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
+  ec.curves.forEach((cv, idx) => {
+    x1.beginPath();
+    cv.pts.forEach((pt, i) => {
+      const px = ox + (pt.q / 100) * w;
+      const py = oy + (1 - (pt.v - vLo) / Math.max(0.1, vHi - vLo)) * h;
+      if (i === 0) x1.moveTo(px, py); else x1.lineTo(px, py);
+    });
+    x1.strokeStyle = cols[idx]; x1.lineWidth = 2.2; x1.stroke();
+    x1.fillStyle = cols[idx]; x1.font = '10.5px sans-serif';
+    x1.fillText(`${cv.cr}C`, ox + w - 135 + idx * 34, oy + 15);
+  });
+  x1.fillStyle = tc.muted; x1.font = '11px sans-serif';
+  x1.fillText('0% Q', ox, oy + h + 16); x1.fillText('100% Accessible Q', ox + w - 98, oy + h + 16);
+
+  // Right: Stacked overpotential waterfall [mV]
+  const c2 = document.getElementById('echemLossCanvas'), x2 = c2.getContext('2d');
+  x2.clearRect(0, 0, c2.width, c2.height);
+  x2.fillStyle = tc.fg; x2.font = 'bold 12px sans-serif';
+  x2.fillText('Mid-SOC Overpotential Breakdown [mV]', 16, 20);
+  x2.strokeStyle = tc.border; x2.strokeRect(ox, oy, w, h);
+  const maxMv = Math.max(40, ...ec.curves.map(c => c.dvIon + c.dvElec + c.dvKin + c.dvConc)) * 1.12;
+  ec.curves.forEach((cv, idx) => {
+    const bw = 36;
+    const bx = ox + 22 + idx * ((w - 40) / 4);
+    const parts = [
+      { v: cv.dvIon, c: '#3b82f6' },
+      { v: cv.dvElec, c: '#64748b' },
+      { v: cv.dvKin, c: '#10b981' },
+      { v: cv.dvConc, c: '#ef4444' }
+    ];
+    let curY = oy + h;
+    parts.forEach(p => {
+      const ph = (p.v / maxMv) * h;
+      x2.fillStyle = p.c;
+      x2.fillRect(bx, curY - ph, bw, ph);
+      curY -= ph;
+    });
+    x2.fillStyle = tc.fg; x2.font = '11px sans-serif';
+    x2.fillText(`${cv.cr}C`, bx + 8, oy + h + 16);
+  });
+  x2.font = '10px sans-serif';
+  x2.fillStyle = '#3b82f6'; x2.fillText('■ Ion', ox + 8, oy + 14);
+  x2.fillStyle = '#64748b'; x2.fillText('■ Elec', ox + 48, oy + 14);
+  x2.fillStyle = '#10b981'; x2.fillText('■ Kin', ox + 94, oy + 14);
+  x2.fillStyle = '#ef4444'; x2.fillText('■ Conc', ox + 134, oy + 14);
+}
+
+function toggleTeachingLab() {
+  document.getElementById('teachingDrawer').classList.toggle('hidden');
+  updateTeachingLab();
+}
+
+function updateTeachingLab() {
+  const hasCube = runs.some(r => r.kind === 'open_cube' && Math.abs(r.porosity - 1.0) < 1e-3);
+  const hasSph = runs.some(r => (r.kind === 'spheres' || r.kind === 'cathode') && r.rz.tau && r.rz.tau > Math.pow(r.porosity, -0.5));
+  const feltKpas = new Set(runs.filter(r => r.kind === 'carbon_felt').map(r => r.kpa));
+  const hasSweep = feltKpas.size >= 4;
+  const hasDepl = runs.some(r => evaluateElectrochemJS(r, 'nmc811').cLim < 6.0);
+  const steps = [
+    { t: 'Lab 1 · Analytical Cube', ok: hasCube, d: "Click '3a · Cube (τ=1.000)' to verify ε = 1.0000 and τ_Z = 1.000." },
+    { t: 'Lab 2 · Bruggeman & Pore Network', ok: hasSph, d: "Run '3b · Sphere Pack' or '2 · Cathode' & inspect S₂(r) in Morphology tab." },
+    { t: 'Lab 3 · Compression Campaign', ok: hasSweep, d: "Evaluate ≥ 4 Carbon Felt loads ('⚡ Run 5-Point Sweep' in GP Planner)." },
+    { t: 'Lab 4 · High-Rate Salt Depletion', ok: hasDepl, d: "Compare 0.5C–4C curves on dense cathode or 420 kPa felt in Electrochem tab." }
+  ];
+  const nOk = steps.filter(s => s.ok).length;
+  document.getElementById('labScoreBadge').textContent = `${nOk} / 4 Completed`;
+  document.getElementById('teachingStepsGrid').innerHTML = steps.map(s => `
+    <div class="rounded border border-[var(--card-border)] bg-[var(--background)] p-2.5 space-y-1">
+      <div class="flex items-center justify-between gap-1 font-bold">
+        <span>${s.t}</span>
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono ${s.ok ? 'bg-emerald-600 text-white' : 'bg-[var(--secondary)] text-[var(--muted-foreground)]'}">${s.ok ? 'PASS' : 'TODO'}</span>
+      </div>
+      <div class="text-[var(--muted-foreground)] leading-snug">${s.d}</div>
+    </div>
+  `).join('');
+}
+
+function runFivePointSweep() {
+  [40, 110, 190, 290, 420].forEach(kpa => {
+    if (!runs.some(r => r.kind === 'carbon_felt' && r.kpa === kpa)) {
+      const r = runFullPipeline({ kind: 'carbon_felt', label: `Carbon Felt (${kpa} kPa)`, N: 22, voxUm: 1.6, kpa, porosity: 0.84, seed: 42, role: 'negative' });
+      r.role = 'negative';
+      r.rCell = liveRcell(r);
+      runs.push(r);
+      activeRun = r;
+    }
+  });
+  renderAll();
+}
+
+function saveCampaignJSON() {
+  const payload = {
+    schema: 'openimpala_hub.campaign.v1',
+    hub_version: '0.3.0',
+    exported_utc: new Date().toISOString(),
+    runs: runs.map(r => ({
+      run_id: r.id, label: r.label, source_kind: r.kind, clamping_kpa: r.kpa,
+      porosity: +r.porosity.toFixed(5), tau_z: r.rz.tau ? +r.rz.tau.toFixed(5) : null,
+      d_eff_z: +r.rz.deff.toFixed(5), solid_sigma_z: +r.solidSigmaZ.toFixed(5), r_cell: +liveRcell(r).toFixed(5)
+    }))
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'openimpala_campaign_v03.json';
+  a.click();
+}
+
+function renderAll() {
+  updateKPIs();
+  updateTeachingLab();
+  if (currentTab === '2d') render2D();
+  else if (currentTab === '3d') render3D();
+  else if (currentTab === 'morph') renderMorphology();
+  else if (currentTab === 'echem') renderElectrochem();
+  else if (currentTab === 'cmp') renderCompare();
+  else if (currentTab === 'twin') renderTwin();
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  ['2d', '3d', 'morph', 'echem', 'cmp', 'twin'].forEach(t => {
+    document.getElementById('panel-' + t).classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById('tabBtn-' + t);
+    if (t === tab) {
+      btn.className = 'px-3 py-1.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)]';
+    } else {
+      btn.className = 'px-3 py-1.5 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)]';
+    }
+  });
+  renderAll();
+}
+
+function syncControlVisibility() {
+  const k = document.getElementById('genSelect').value;
+  document.getElementById('clampBlock').style.display = k === 'carbon_felt' ? 'block' : 'none';
+  document.getElementById('porBlock').style.display = (k === 'open_cube' || k === 'xct_grey') ? 'none' : 'block';
+  const drw = document.getElementById('xctDrawer');
+  if (k === 'xct_grey') { drw.classList.remove('hidden'); onXctPreviewChange(true); }
+  else { drw.classList.add('hidden'); }
+}
+
+function onPlaneChange() {
+  if (!activeRun) return;
+  document.getElementById('sliceSlider').value = Math.floor(activeRun.N / 2);
+  render2D();
+}
+
+function addAndSelectRun(cfg) {
+  const r = runFullPipeline(cfg);
+  r.role = cfg.role || 'negative';
+  r.rCell = liveRcell(r);
+  runs.push(r);
+  activeRun = r;
+  if (r.rois.length > 0) document.getElementById('sliceSlider').value = Math.floor((r.rois[0].y0 + r.rois[0].y1) / 2);
+  else document.getElementById('sliceSlider').value = Math.floor(r.N / 2);
+  renderAll();
+}
+
+function selectRun(id) {
+  const f = runs.find(x => x.id === id);
+  if (f) { activeRun = f; renderAll(); }
+}
+
+function executeCustomRun() {
+  const kind = document.getElementById('genSelect').value;
+  const N = parseInt(document.getElementById('gridSlider').value, 10);
+  const voxUm = parseFloat(document.getElementById('voxSlider').value);
+  const kpa = parseInt(document.getElementById('clampSlider').value, 10);
+  const porosity = parseFloat(document.getElementById('porSlider').value);
+  const seed = parseInt(document.getElementById('seedInput').value, 10) || 42;
+  const role = document.getElementById('roleSelect').value || 'negative';
+  const titles = {
+    carbon_felt: `Carbon Felt (${kpa} kPa)`,
+    cathode: `3-Phase NMC+CBD (${N}³)`,
+    spheres: `Sphere Pack (${N}³)`,
+    open_cube: `Analytical Open Cube (${N}³)`,
+    xct_grey: `Thresholded XCT (${N}³)`
+  };
+  addAndSelectRun({ kind, label: titles[kind], N, voxUm, kpa, porosity, seed, role });
+}
+
+function runPreset(p) {
+  if (p === 'felt') {
+    document.getElementById('genSelect').value = 'carbon_felt';
+    document.getElementById('roleSelect').value = 'negative';
+    document.getElementById('clampSlider').value = 150;
+    document.getElementById('clampReadout').textContent = '150 kPa';
+  } else if (p === 'cathode') {
+    document.getElementById('genSelect').value = 'cathode';
+    document.getElementById('roleSelect').value = 'positive';
+  } else if (p === 'cube') {
+    document.getElementById('genSelect').value = 'open_cube';
+    document.getElementById('roleSelect').value = 'negative';
+  } else if (p === 'spheres') {
+    document.getElementById('genSelect').value = 'spheres';
+    document.getElementById('roleSelect').value = 'negative';
+    document.getElementById('porSlider').value = 0.68;
+    document.getElementById('porReadout').textContent = '0.68';
+  }
+  syncControlVisibility();
+  executeCustomRun();
+}
+
+function executeSuggestedScan() {
+  document.getElementById('genSelect').value = 'carbon_felt';
+  document.getElementById('roleSelect').value = 'negative';
+  document.getElementById('clampSlider').value = suggestedKpa;
+  document.getElementById('clampReadout').textContent = suggestedKpa + ' kPa';
+  syncControlVisibility();
+  executeCustomRun();
+}
+
+function exportBPX() {
+  if (!activeRun) return;
+  const role = activeRun.role || 'negative';
+  const prefix = role === 'positive' ? 'Positive electrode' : (role === 'separator' ? 'Separator' : 'Negative electrode');
+  const paramObj = {
+    [`${prefix} porosity`]: +activeRun.porosity.toFixed(6),
+    [`${prefix} diffusivity ratio (through-plane)`]: +activeRun.rz.deff.toFixed(6)
+  };
+  if (role !== 'separator') {
+    paramObj[`${prefix} active material volume fraction`] = +(1.0 - activeRun.porosity).toFixed(6);
+    paramObj[`${prefix} surface area to volume ratio [m-1]`] = Math.round(activeRun.ssa);
+  }
+  const bpx = {
+    schema: "openimpala.bpx.v1",
+    sample_id: activeRun.label,
+    electrode_role: role,
+    data_origin: activeRun.kind === 'xct_grey' ? "user_upload" : "synthetic",
+    grid_zyx: [activeRun.N, activeRun.N, activeRun.N],
+    voxel_size_m: [activeRun.voxUm * 1e-6, activeRun.voxUm * 1e-6, activeRun.voxUm * 1e-6],
+    results: {
+      X: { Deff_ratio: +activeRun.rx.deff.toFixed(6), tortuosity: activeRun.rx.tau ? +activeRun.rx.tau.toFixed(6) : null },
+      Y: { Deff_ratio: +activeRun.ry.deff.toFixed(6), tortuosity: activeRun.ry.tau ? +activeRun.ry.tau.toFixed(6) : null },
+      Z: { Deff_ratio: +activeRun.rz.deff.toFixed(6), tortuosity: activeRun.rz.tau ? +activeRun.rz.tau.toFixed(6) : null },
+    },
+    bpx: { Parameter: paramObj }
+  };
+  const blob = new Blob([JSON.stringify(bpx, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `openimpala_bpx_${activeRun.id}.json`;
+  a.click();
+}
+
+window.addEventListener('themechange', renderAll);
+window.addEventListener('resize', renderAll);
+
+// Seed initial 3-point Carbon Felt campaign on load (35, 410, 150 kPa) so Compare & GP tabs are immediately populated
+(function boot() {
+  [35, 410, 150].forEach(kpa => {
+    const r = runFullPipeline({ kind: 'carbon_felt', label: `Carbon Felt (${kpa} kPa)`, N: 22, voxUm: 1.6, kpa, porosity: 0.84, seed: 42 });
+    r.role = 'negative';
+    runs.push(r);
+    activeRun = r;
+  });
+  document.getElementById('cmpLeftSel').value = runs[0].id;
+  document.getElementById('cmpRightSel').value = runs[1].id;
+  if (activeRun.rois.length > 0) document.getElementById('sliceSlider').value = Math.floor((activeRun.rois[0].y0 + activeRun.rois[0].y1) / 2);
+  renderAll();
+})();
+</script>
+</body>
+</html>

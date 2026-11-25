@@ -1,34 +1,47 @@
-"""Declarative Dash layout for The OpenImpala Hub (`v0.2`)."""
+"""Declarative Dash layout for The OpenImpala Hub (`v0.3.0`)."""
 
 from __future__ import annotations
 
 from dash import dcc, html
 
+from ..engine.electrochem import CHEMISTRIES
 from ..engine.generators import list_porousdiff_gallery
+from ..engine.mechanics import has_sms_backend
 from .store import RunRegistry
 
 
 def history_entry_from_summary(s) -> dict:
-    """Build a compact JSON-serializable campaign history dict preserving live regime ingredients."""
+    """Build a compact JSON-serializable campaign history dict preserving live regime & electrochem ingredients."""
     tz = s.directional.get("z")
     mspec = s.microstructure_spec or {}
     strain = float(mspec.get("compression_strain", 0.0))
+    v_strain = float(mspec.get("virtual_compression_strain", 0.0))
     thickness_ratio = (
         max(0.35, 1.0 - strain)
         if s.source_kind in ("carbon_felt", "porousdiff_gallery")
-        else 1.0
+        else max(0.35, 1.0 - v_strain)
     )
+    mech = s.mechanics or {}
+    echem = s.electrochem or {}
+    morph = s.morphology or {}
     return {
         "run_id": s.run_id,
         "label": s.label,
         "clamping_kpa": float(mspec.get("clamping_kpa", 150.0)),
+        "virtual_compression_strain": round(v_strain, 4),
         "porosity": s.porosity,
         "tau_z": tz.tortuosity if tz else None,
+        "bruggeman_z": tz.bruggeman_exponent if tz else None,
         "d_eff_z": tz.effective_diffusivity if tz else s.porosity,
         "sigma_z": s.solid_effective_conductivity_z,
         "active_ssa": s.interfacial_area_active_m_inv,
+        "thickness_um": round(float(s.shape_zyx[0]) * float(s.voxel_size_um_zyx[0]), 3),
         "thickness_ratio": round(thickness_ratio, 4),
         "r_cell": s.cell_resistance_fom,
+        "limiting_c_rate": echem.get("limiting_c_rate"),
+        "trapped_fraction": morph.get("trapped_fraction", 0.0),
+        "dead_end_fraction": morph.get("dead_end_fraction", 0.0),
+        "effective_modulus_gpa": mech.get("effective_modulus_gpa"),
         "source_kind": s.source_kind,
         "microstructure_spec": mspec,
         "solve_spec": s.solve_spec,
@@ -91,6 +104,30 @@ def _source_dropdown_options() -> list[dict]:
     ]
 
 
+def _physics_checklist_options() -> list[dict]:
+    sms_ready = has_sms_backend()
+    sms_label = (
+        " Compute 3D SMS Mechanics (E_eff & σ_vM)"
+        if sms_ready
+        else " Compute 3D SMS Mechanics (install .[sms] extra)"
+    )
+    return [
+        {
+            "label": " Compute 3×3 Periodic D_eff Tensor",
+            "value": "homog",
+        },
+        {
+            "label": " Compute Subvolume REV Curve (oi.rev_study)",
+            "value": "rev",
+        },
+        {
+            "label": sms_label,
+            "value": "sms",
+            "disabled": not sms_ready,
+        },
+    ]
+
+
 def build_hub_layout(registry: RunRegistry) -> html.Div:
     """Construct the root Dash component tree seeded with warm-start run IDs."""
     init_history = initial_history_records(registry)
@@ -104,12 +141,14 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
         **{"data-theme": "light"},
         children=[
             dcc.Store(id="active-run-id-store", data=default_id),
-            dcc.Store(id="run-history-store", data=init_history),
+            dcc.Store(id="run-history-store", data=init_history, storage_type="local"),
             dcc.Store(id="theme-store", data="light", storage_type="local"),
+            dcc.Store(id="teaching-lab-open-store", data=False),
             dcc.Store(id="uploaded-file-store", data=None),
             dcc.Store(id="suggested-kpa-store", data=245.0),
             dcc.Download(id="download-bundle"),
             dcc.Download(id="download-bpx"),
+            dcc.Download(id="download-campaign"),
             # ── Top Navigation & Preset Bar ──
             html.Header(
                 className="hub-topbar",
@@ -122,7 +161,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                 children=[
                                     html.H1("The OpenImpala Hub", className="brand-title"),
                                     html.P(
-                                        "3D Microstructure Synthesis · AMReX Transport Physics · Autonomous Experiment Steering",
+                                        "3D Microstructure Synthesis · AMReX Transport & SMS Mechanics · Cell Electrochemistry · Autonomous Twin",
                                         className="brand-subtitle",
                                     ),
                                 ]
@@ -165,6 +204,12 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                     html.Div(
                         className="action-bar",
                         children=[
+                            html.Button(
+                                "🎓 Teaching Lab",
+                                id="teaching-lab-btn",
+                                className="btn",
+                                n_clicks=0,
+                            ),
                             html.Button(
                                 "⬇ Export NIA Bundle (.zip)",
                                 id="export-bundle-btn",
@@ -331,6 +376,26 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                     ),
                                 ],
                             ),
+                            # Virtual Z-Compression Rig (for uploaded XCT or benchmark datasets)
+                            html.Div(
+                                id="virtual-compress-block",
+                                style={"display": "none"},
+                                children=[
+                                    html.Label(
+                                        "Virtual Z-Compression Strain ε_z [-]",
+                                        className="field-label",
+                                    ),
+                                    dcc.Slider(
+                                        id="virtual-compress-slider",
+                                        min=0.0,
+                                        max=0.50,
+                                        step=0.05,
+                                        value=0.0,
+                                        marks={0.0: "0%", 0.25: "25%", 0.5: "50%"},
+                                        tooltip={"placement": "bottom", "always_visible": False},
+                                    ),
+                                ],
+                            ),
                             html.Div(
                                 id="grid-side-block",
                                 children=[
@@ -492,7 +557,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                 ],
                             ),
                             html.Hr(style={"width": "100%", "borderColor": "var(--border-color)"}),
-                            html.Div("Step 2 · OpenImpala Physics", className="sidebar-heading"),
+                            html.Div("Step 2 · Coupled Physics", className="sidebar-heading"),
                             html.Div(
                                 children=[
                                     html.Label("Conducting Phase ID", className="field-label"),
@@ -566,16 +631,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                             ),
                             dcc.Checklist(
                                 id="homogenisation-check",
-                                options=[
-                                    {
-                                        "label": " Compute 3×3 Periodic D_eff Tensor",
-                                        "value": "homog",
-                                    },
-                                    {
-                                        "label": " Compute Subvolume REV Curve (oi.rev_study)",
-                                        "value": "rev",
-                                    },
-                                ],
+                                options=_physics_checklist_options(),
                                 value=[],
                                 style={
                                     "fontSize": "12.5px",
@@ -587,6 +643,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                             dcc.Loading(
                                 type="circle",
                                 children=html.Div(
+                                    style={"display": "flex", "flexDirection": "column", "gap": "6px"},
                                     children=[
                                         html.Button(
                                             "▶ Generate & Run OpenImpala",
@@ -594,8 +651,15 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                             className="btn btn-primary",
                                             n_clicks=0,
                                         ),
-                                        html.Div(id="run-error-banner", style={"marginTop": "8px"}),
-                                    ]
+                                        html.Button(
+                                            "⚡ Run 5-Point Campaign Sweep",
+                                            id="run-batch-sweep-btn",
+                                            className="btn",
+                                            style={"width": "100%"},
+                                            n_clicks=0,
+                                        ),
+                                        html.Div(id="run-error-banner", style={"marginTop": "4px"}),
+                                    ],
                                 ),
                             ),
                         ],
@@ -604,15 +668,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                     html.Main(
                         className="hub-main",
                         children=[
+                            # Collapsible Greenwich MSc/BEng Teaching Lab Guide
+                            html.Div(
+                                id="teaching-lab-drawer",
+                                className="lab-drawer",
+                                style={"display": "none"},
+                            ),
                             html.Div(id="preset-context-banner", className="context-banner"),
                             html.Div(id="kpi-cards-row", className="kpi-grid"),
                             dcc.Tabs(
                                 id="main-tabs",
                                 value="tab-2d",
                                 children=[
-                                    # Tab 1: 2D Slices & Transport Flux
+                                    # Tab 1: 2D Slices, Flux & Stress
                                     dcc.Tab(
-                                        label="2D Slices & Transport Flux",
+                                        label="2D Slices, Flux & Stress",
                                         value="tab-2d",
                                         children=[
                                             html.Div(
@@ -659,7 +729,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                         id="slice-layer-radio",
                                                                         options=[
                                                                             {
-                                                                                "label": " Diffusive Flux |J/J0|",
+                                                                                "label": " Flux |J/J0|",
                                                                                 "value": "flux",
                                                                             },
                                                                             {
@@ -667,8 +737,12 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                                 "value": "potential",
                                                                             },
                                                                             {
-                                                                                "label": " Phase Labels",
+                                                                                "label": " Phase ID",
                                                                                 "value": "phase",
+                                                                            },
+                                                                            {
+                                                                                "label": " Stress σ_vM",
+                                                                                "value": "vm_stress",
                                                                             },
                                                                         ],
                                                                         value="flux",
@@ -716,7 +790,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                         style={"marginTop": "10px"},
                                                         children=[
                                                             html.Summary(
-                                                                "Continuum PyBaMM Parameters & Homogenised Tensor Readout",
+                                                                "Continuum PyBaMM Parameters, Mechanics & Homogenised Tensor Readout",
                                                                 style={
                                                                     "cursor": "pointer",
                                                                     "fontWeight": "600",
@@ -838,7 +912,76 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                             )
                                         ],
                                     ),
-                                    # Tab 3: Side-by-Side State Comparison
+                                    # Tab 3: Morphology & Pore Network Validation (Pillar A)
+                                    dcc.Tab(
+                                        label="Morphology & Pore Network",
+                                        value="tab-morph",
+                                        children=[
+                                            html.Div(
+                                                className="panel-card",
+                                                children=[
+                                                    html.Div(
+                                                        id="morphology-kpi-strip",
+                                                        className="kpi-grid",
+                                                        style={"marginBottom": "12px"},
+                                                    ),
+                                                    dcc.Graph(id="morphology-graph"),
+                                                ],
+                                            )
+                                        ],
+                                    ),
+                                    # Tab 4: Cell Electrochemistry & Mechanics (Pillars B & D)
+                                    dcc.Tab(
+                                        label="Cell Electrochemistry & Mechanics",
+                                        value="tab-echem",
+                                        children=[
+                                            html.Div(
+                                                className="panel-card",
+                                                children=[
+                                                    html.Div(
+                                                        className="controls-strip",
+                                                        children=[
+                                                            html.Div(
+                                                                style={"minWidth": "300px"},
+                                                                children=[
+                                                                    html.Span(
+                                                                        "Cell Chemistry Preset",
+                                                                        className="field-label",
+                                                                    ),
+                                                                    dcc.Dropdown(
+                                                                        id="chemistry-preset-dropdown",
+                                                                        clearable=False,
+                                                                        value="nmc811_li_ion",
+                                                                        options=[
+                                                                            {
+                                                                                "label": spec.title,
+                                                                                "value": spec.key,
+                                                                            }
+                                                                            for spec in CHEMISTRIES.values()
+                                                                        ],
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                            html.Div(
+                                                                id="mechanics-status-strip",
+                                                                style={
+                                                                    "flex": "1",
+                                                                    "fontSize": "12.5px",
+                                                                },
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    html.Div(
+                                                        id="electrochem-kpi-strip",
+                                                        className="kpi-grid",
+                                                        style={"marginBottom": "12px"},
+                                                    ),
+                                                    dcc.Graph(id="electrochem-graph"),
+                                                ],
+                                            )
+                                        ],
+                                    ),
+                                    # Tab 5: Side-by-Side State Comparison
                                     dcc.Tab(
                                         label="Compare States",
                                         value="tab-compare",
@@ -917,7 +1060,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                             )
                                         ],
                                     ),
-                                    # Tab 4: WP3 Autonomous Experiment Steering
+                                    # Tab 6: WP3 Autonomous Experiment Steering
                                     dcc.Tab(
                                         label="Autonomous Planner (Digital Twin)",
                                         value="tab-twin",
@@ -938,6 +1081,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                     "display": "flex",
                                                                     "flexWrap": "wrap",
                                                                     "gap": "8px",
+                                                                    "alignItems": "center",
                                                                 },
                                                                 children=[
                                                                     html.Button(
@@ -951,6 +1095,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                         id="jump-roi-btn",
                                                                         className="btn",
                                                                         n_clicks=0,
+                                                                    ),
+                                                                    html.Button(
+                                                                        "⬇ Save Campaign (.json)",
+                                                                        id="export-campaign-btn",
+                                                                        className="btn",
+                                                                        n_clicks=0,
+                                                                    ),
+                                                                    dcc.Upload(
+                                                                        id="upload-campaign-box",
+                                                                        children=html.Button(
+                                                                            "⬆ Load Campaign",
+                                                                            className="btn",
+                                                                            type="button",
+                                                                        ),
+                                                                        multiple=False,
                                                                     ),
                                                                     html.Button(
                                                                         "↺ Reset Campaign",

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openimpala-hub"
-version = "0.2.0"
-description = "Interactive web platform coupling 3D microstructure synthesis, OpenImpala transport physics solves, volumetric visualisation, and autonomous experiment steering."
+version = "0.3.0"
+description = "Interactive web platform coupling 3D microstructure synthesis, OpenImpala transport & SMS mechanics solves, cell electrochemistry, volumetric visualisation, and autonomous experiment steering."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -53,6 +53,15 @@ dependencies = [
 [project.optional-dependencies]
 mpi = [
   "openimpala[openmpi]>=5.0,<6.0",
+]
+sms = [
+  "sms @ git+https://github.com/BASE-Laboratory/structural_mechanics_solver.git",
+]
+porousdiff = [
+  "porousdiff @ git+https://github.com/BASE-Laboratory/PorousDiff.git@feature/paper-ready-conditional",
+]
+pybamm = [
+  "pybamm>=24.1",
 ]
 server = [
   "gunicorn>=22.0",
