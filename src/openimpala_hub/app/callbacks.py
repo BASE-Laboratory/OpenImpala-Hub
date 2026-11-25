@@ -1,12 +1,17 @@
-"""Reactive Dash callbacks connecting the UI to the headless OpenImpala-Hub engine (`v0.3.0`)."""
+"""Reactive Dash callbacks for The OpenImpala Hub (`v0.4.0` — BASE Lab Signature)."""
 
 from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+import io
 import json
+from pathlib import Path
+import tempfile
 from typing import Any
+import zipfile
 
+from basecoat import write_ome_zarr
 from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 import numpy as np
@@ -14,7 +19,20 @@ import numpy as np
 from .. import __version__ as _HUB_VERSION
 from ..contracts import MicrostructureSpec, SolveSpec
 from ..engine.bundle import build_report_bundle_bytes
+from ..engine.chunked_io import (
+    dataset_intensity_range,
+    dataset_structural_metrics,
+    extract_native_roi_volume,
+    fit_reference_circle,
+    load_chunked_volume,
+    load_echem_csv,
+    load_lazy_slice,
+    render_slice_with_roi_overlay,
+    stack_dimensions,
+)
 from ..engine.electrochem import evaluate_cell_electrochemistry
+from ..engine.mechanics import has_sms_backend
+from ..engine.operando_demo import discover_operando_datasets
 from ..engine.solver import ExecutedRun, run_transport_pipeline
 from ..engine.steering import compute_cell_resistance, suggest_next_setpoint_gp
 from ..engine.uploads import inspect_staged_volume, stage_upload_bytes
@@ -22,20 +40,35 @@ from ..presets import PRESETS, make_carbon_felt_spec
 from .figures import (
     SlicePlane,
     build_3d_isosurface_figure,
+    build_chunked_mesh3d_figure,
+    build_compact_discharge_figure,
     build_directional_and_profile_figure,
     build_electrochem_figure,
     build_gp_steering_figure,
     build_morphology_figure,
-    build_slice_figure,
+    build_operando_echem_figure,
+    build_operando_structural_figure,
+    build_slice_histogram_figure,
     build_upload_segmentation_preview_figure,
     empty_placeholder_figure,
+    render_run_slice_png,
 )
-from .layout import history_entry_from_summary, initial_history_records
+from .layout import history_entry_from_summary
 from .store import RunRegistry
 
 
 def _history_entry_from_run(run: ExecutedRun) -> dict[str, Any]:
     return history_entry_from_summary(run.summary)
+
+
+def _append_history(
+    history: list[dict[str, Any]] | None,
+    entry: dict[str, Any],
+    max_len: int = 36,
+) -> list[dict[str, Any]]:
+    items = [h for h in (history or []) if h.get("run_id") != entry["run_id"]]
+    items.append(entry)
+    return items[-max_len:]
 
 
 def plane_slider_bounds_for_run(run: ExecutedRun, plane: SlicePlane | str) -> tuple[int, int]:
@@ -224,7 +257,7 @@ def parse_campaign_json(raw_text: str) -> list[dict[str, Any]]:
 
 
 def evaluate_teaching_lab_progress(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Evaluate completion status of the 4 Greenwich MSc/BEng image-based modelling exercises."""
+    """Evaluate completion status of the 4 interactive image-based modelling exercises."""
     items = list(history or [])
     has_cube = any(
         h.get("source_kind") == "open_cube"
@@ -252,1489 +285,1386 @@ def evaluate_teaching_lab_progress(history: list[dict[str, Any]] | None) -> list
 
     return [
         {
-            "step": "Lab 1 · Closed-Form Verification",
+            "step": "Exercise 1",
+            "title": "Straight-channel sanity check",
             "passed": has_cube,
-            "instruction": "Click Preset '3a · Cube (τ=1.000)' and verify ε = 1.0000, τ_Z = 1.000, and uniform |J/J0| = 1.0.",
+            "description": "Run an unobstructed open cube (100% pore space) and confirm pathway tortuosity equals 1.000 along every axis.",
         },
         {
-            "step": "Lab 2 · Bruggeman Departure & Trapped Pores",
+            "step": "Exercise 2",
+            "title": "Detours around spherical particles",
             "passed": has_bruggeman,
-            "instruction": "Run Preset '3b · Benchmark Spheres' or Gaussian Blobs, then inspect τ_Z > ε^(-0.5) and Dead-End/Trapped pores in Tab 3.",
+            "description": "Simulate a 3D sphere pack or foam and see how real pore bottlenecks exceed the textbook Bruggeman approximation.",
         },
         {
-            "step": "Lab 3 · Anisotropic Compression Campaign",
+            "step": "Exercise 3",
+            "title": "Compression trade-off sweep",
             "passed": has_sweep,
-            "instruction": "Evaluate ≥ 4 Carbon Felt clamping loads (click '⚡ Run 5-Point Campaign Sweep' or '⚡ Execute Recommended Scan' in Tab 6).",
+            "description": "Evaluate at least 4 compression loads on carbon felt to find the sweet spot between solid contact and open pores.",
         },
         {
-            "step": "Lab 4 · Fast-Charging Salt-Depletion Limit",
+            "step": "Exercise 4",
+            "title": "Fast-charge salt depletion",
             "passed": has_high_rate_diff,
-            "instruction": "Run Preset '2 · 3-Phase Battery Cathode' (or high-load felt) and inspect 4C accessible capacity drop vs C_lim in Tab 4.",
+            "description": "Inspect a dense or compressed electrode where high tortuosity limits fast charging below 4C.",
         },
     ]
 
 
-def register_callbacks(app: Dash, registry: RunRegistry) -> None:
-    """Attach all interactive callbacks to `app`."""
+def _result_row(name: str, hint: str, val: str) -> html.Tr:
+    return html.Tr(
+        [
+            html.Td(
+                [
+                    html.Span(name, className="metric-name"),
+                    html.Span(hint, className="metric-hint"),
+                ]
+            ),
+            html.Td(val, className="metric-val"),
+        ]
+    )
 
-    @app.callback(
+
+def _build_plain_results_rows(run: ExecutedRun) -> list[html.Tr]:
+    s = run.summary
+    tz = s.directional.get("z")
+    morph = s.morphology or {}
+    mech = s.mechanics or {}
+    echem = s.electrochem or {}
+
+    eps_str = f"{s.porosity * 100:.1f}% ({s.porosity:.4f})"
+    perc_pct = float(morph.get("percolating_fraction", s.porosity)) * 100.0
+    trap_pct = float(morph.get("trapped_fraction", 0.0)) * 100.0
+    conn_str = f"{perc_pct:.1f}% open · {trap_pct:.1f}% trapped"
+
+    tau_str = f"{tz.tortuosity:.3f}" if (tz and tz.tortuosity is not None) else "Blocked"
+    deff_val = tz.effective_diffusivity if tz else 0.0
+    deff_str = f"{deff_val * 100:.1f}% ({deff_val:.4f})"
+    sig_str = f"{s.solid_effective_conductivity_z:.4f}" if s.solid_effective_conductivity_z > 0 else "N/A (all pore)"
+
+    e_gpa = mech.get("effective_modulus_gpa")
+    if e_gpa is not None:
+        stiff_str = f"{float(e_gpa):.2f} GPa"
+    else:
+        stiff_str = "Off (enable SMS)" if has_sms_backend() else "Optional .[sms]"
+
+    c_lim = echem.get("limiting_c_rate")
+    clim_str = f"{float(c_lim):.2f}C" if c_lim is not None else "N/A"
+
+    return [
+        _result_row(
+            "Open pore space (ε)",
+            "Fraction of volume open to liquid electrolyte",
+            eps_str,
+        ),
+        _result_row(
+            "Connected vs trapped pores",
+            "Trapped pores cannot carry steady-state current",
+            conn_str,
+        ),
+        _result_row(
+            "Pathway tortuosity (τ)",
+            "Detour factor for ions through thickness (1.0 = straight)",
+            tau_str,
+        ),
+        _result_row(
+            "Effective ion diffusivity",
+            "Ion transport speed relative to open liquid",
+            deff_str,
+        ),
+        _result_row(
+            "Solid electrical wiring",
+            "Relative electron conduction through solid network",
+            sig_str,
+        ),
+        _result_row(
+            "Mechanical stiffness",
+            "Through-plane Young's modulus under load",
+            stiff_str,
+        ),
+        _result_row(
+            "Max fast-charge rate",
+            "Rate where electrolyte salt begins to deplete",
+            clim_str,
+        ),
+    ]
+
+
+def register_callbacks(app: Dash, registry: RunRegistry) -> None:
+    """Attach all v0.4.0 callbacks onto `app`."""
+
+    # ── 1. Clientside Theme Toggle (`BASE Lab Signature` <-> `Warm Darkroom`) ──
+    app.clientside_callback(
+        """
+        function(nClicks, storedTheme) {
+            const trig = (window.dash_clientside && window.dash_clientside.callback_context && window.dash_clientside.callback_context.triggered_id) || null;
+            let theme = (storedTheme === "dark") ? "dark" : "light";
+            if (trig === "theme-toggle-btn" && nClicks > 0) {
+                theme = (theme === "dark") ? "light" : "dark";
+            }
+            document.documentElement.setAttribute("data-theme", theme);
+            const btnLabel = (theme === "dark") ? "Light mode" : "Dark mode";
+            return [theme, btnLabel, theme];
+        }
+        """,
         Output("theme-store", "data"),
+        Output("theme-toggle-btn", "children"),
+        Output("hub-theme-wrapper", "data-theme"),
         Input("theme-toggle-btn", "n_clicks"),
         State("theme-store", "data"),
+    )
+
+    # ── 2. Clientside 3D Opacity (`Plotly.restyle`, 0-roundtrip 60 fps) ──
+    app.clientside_callback(
+        """
+        function(opacityVal) {
+            const container = document.getElementById("volume-3d-graph");
+            if (container && window.Plotly) {
+                const plotEl = container.querySelector(".js-plotly-plot") || container;
+                if (plotEl && plotEl.data && plotEl.data.length > 0) {
+                    window.Plotly.restyle(plotEl, {opacity: opacityVal});
+                }
+            }
+            return "Opacity " + Number(opacityVal).toFixed(2);
+        }
+        """,
+        Output("vol-3d-caption-right", "title"),
+        Input("vol-opacity-slider", "value"),
+    )
+
+    # ── 3. Top Navigation & Sample Source Panel Visibility ──
+    @app.callback(
+        Output("panel-mode-generate", "style"),
+        Output("panel-mode-xray", "style"),
+        Output("panel-mode-upload", "style"),
+        Output("panel-3d-controls", "style"),
+        Output("view-slices", "style"),
+        Output("view-3d", "style"),
+        Output("view-compare", "style"),
+        Output("view-pores", "style"),
+        Output("view-plan", "style"),
+        Output("view-guide", "style"),
+        Output("hub-stage-grid", "className"),
+        Output("hub-right-column", "style"),
+        Input("sample-mode-radio", "value"),
+        Input("main-view-tabs", "value"),
+    )
+    def _sync_stage_panels(sample_mode: str, tab_val: str):
+        show = {"display": "block"}
+        hide = {"display": "none"}
+        show_flex = {"display": "flex"}
+
+        p_gen = show if sample_mode == "generate" else hide
+        p_xray = show if sample_mode == "xray" else hide
+        p_up = show if sample_mode == "upload" else hide
+        p_3d = {"display": "block", "marginTop": "16px"} if tab_val == "tab-3d" else hide
+
+        v_slices = show_flex if tab_val == "tab-slices" else hide
+        v_3d = show_flex if tab_val == "tab-3d" else hide
+        v_cmp = show if tab_val == "tab-compare" else hide
+        v_pores = show if tab_val == "tab-pores" else hide
+        v_plan = show if tab_val == "tab-plan" else hide
+        v_guide = show if tab_val == "tab-guide" else hide
+
+        is_wide = tab_val in ("tab-compare", "tab-pores", "tab-plan", "tab-guide")
+        stage_cls = "hub-stage hub-stage--wide" if is_wide else "hub-stage"
+        right_style = hide if is_wide else show
+        return (
+            p_gen,
+            p_xray,
+            p_up,
+            p_3d,
+            v_slices,
+            v_3d,
+            v_cmp,
+            v_pores,
+            v_plan,
+            v_guide,
+            stage_cls,
+            right_style,
+        )
+
+    # ── 4. Open Selected X-ray Region Directly in 3D View ──
+    @app.callback(
+        Output("main-view-tabs", "value"),
+        Output("vol-source-dropdown", "value"),
+        Input("open-roi-3d-btn", "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_theme(n_clicks: int, current: str | None) -> str:
+    def _open_roi_in_3d(n_clicks: int):
         if not n_clicks:
             raise PreventUpdate
-        return "dark" if (current or "light") == "light" else "light"
+        return "tab-3d", "xray_roi"
 
+    # ── 5. New Random Seed & Control Readouts ──
     @app.callback(
-        Output("hub-theme-wrapper", "data-theme"),
-        Input("theme-store", "data"),
-    )
-    def apply_theme_attr(theme: str | None) -> str:
-        return "dark" if theme == "dark" else "light"
-
-    @app.callback(
-        Output("teaching-lab-open-store", "data"),
-        Input("teaching-lab-btn", "n_clicks"),
-        State("teaching-lab-open-store", "data"),
+        Output("seed-store", "data"),
+        Input("new-seed-btn", "n_clicks"),
+        State("seed-store", "data"),
         prevent_initial_call=True,
     )
-    def toggle_teaching_lab(n_clicks: int, is_open: bool | None) -> bool:
+    def _bump_seed(n_clicks: int, cur_seed: int | None):
         if not n_clicks:
             raise PreventUpdate
-        return not bool(is_open)
+        nxt = ((int(cur_seed or 42) * 73 + 19) % 8999) + 100
+        return nxt
 
     @app.callback(
-        Output("teaching-lab-drawer", "style"),
-        Output("teaching-lab-drawer", "children"),
-        Input("teaching-lab-open-store", "data"),
-        Input("run-history-store", "data"),
-    )
-    def render_teaching_lab_drawer(
-        is_open: bool | None,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[dict[str, str], Any]:
-        if not is_open:
-            return {"display": "none"}, []
-        steps = evaluate_teaching_lab_progress(history)
-        done_cnt = sum(1 for st in steps if st["passed"])
-        cards = [
-            html.Div(
-                className="lab-step-card lab-step-done" if st["passed"] else "lab-step-card",
-                children=[
-                    html.Div(
-                        [
-                            html.Strong(
-                                ("✅ " if st["passed"] else "⬜ ") + st["step"],
-                                style={"fontSize": "12.5px"},
-                            )
-                        ]
-                    ),
-                    html.Div(
-                        st["instruction"],
-                        style={"marginTop": "4px", "color": "var(--text-secondary)"},
-                    ),
-                ],
-            )
-            for st in steps
-        ]
-        content = [
-            html.Div(
-                style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
-                children=[
-                    html.Div(
-                        [
-                            html.Span("Greenwich MSc / BEng Lab", className="pill pill-origin"),
-                            html.Strong(
-                                "Guided Image-Based Battery Modelling Worksheet",
-                                style={"fontSize": "14px"},
-                            ),
-                        ]
-                    ),
-                    html.Span(
-                        f"{done_cnt} / {len(steps)} Exercises Verified",
-                        style={"fontSize": "12.5px", "fontWeight": "700"},
-                    ),
-                ],
-            ),
-            html.Div(cards, className="lab-steps-grid"),
-        ]
-        return {"display": "block"}, content
-
-    @app.callback(
-        Output("upload-container", "style"),
-        Output("virtual-compress-block", "style"),
-        Output("grid-side-block", "style"),
-        Output("clamping-control-block", "style"),
-        Output("porosity-control-block", "style"),
-        Output("seed-control-block", "style"),
-        Output("aniso-spacing-details", "open"),
+        Output("clamping-kpa-readout", "children"),
+        Output("porosity-readout", "children"),
+        Output("virtual-compress-readout", "children"),
+        Output("vol-threshold-readout", "children"),
+        Output("clamping-field-wrap", "style"),
+        Output("porosity-field-wrap", "style"),
+        Output("electrode-role-dropdown", "value"),
+        Input("clamping-kpa-slider", "value"),
+        Input("porosity-slider", "value"),
+        Input("virtual-compress-slider", "value"),
+        Input("vol-threshold-slider", "value"),
         Input("source-kind-dropdown", "value"),
+        State("electrode-role-dropdown", "value"),
     )
-    def update_sidebar_visibility(
+    def _sync_control_readouts(
+        kpa: float,
+        eps: float,
+        vcomp: float,
+        thr: float,
         source_kind: str,
-    ) -> tuple[
-        dict[str, str],
-        dict[str, str],
-        dict[str, str],
-        dict[str, str],
-        dict[str, str],
-        dict[str, str],
-        bool,
-    ]:
-        is_upload = source_kind == "user_upload"
-        is_fixed = source_kind in ("user_upload", "benchmark_dataset", "porousdiff_gallery")
-        show_upload = {"display": "block"} if is_upload else {"display": "none"}
-        show_vcomp = (
-            {"display": "block"}
-            if source_kind in ("user_upload", "benchmark_dataset")
-            else {"display": "none"}
+        cur_role: str,
+    ):
+        show_kpa = source_kind in ("porousdiff_gallery", "carbon_felt")
+        show_eps = source_kind not in ("open_cube", "benchmark_dataset")
+        role_out = cur_role
+        if ctx.triggered_id == "source-kind-dropdown":
+            if source_kind == "multiphase_electrode":
+                role_out = "positive"
+            elif source_kind in ("porousdiff_gallery", "carbon_felt"):
+                role_out = "negative"
+        return (
+            f"{float(kpa or 0):.0f} kPa",
+            f"{float(eps or 0.5) * 100:.0f}%",
+            f"{float(vcomp or 0):.0f}%",
+            f"{float(thr or 128):.0f}",
+            {"display": "block"} if show_kpa else {"display": "none"},
+            {"display": "block"} if show_eps else {"display": "none"},
+            role_out,
         )
-        show_grid = {"display": "none"} if is_fixed else {"display": "block"}
-        show_clamp = (
-            {"display": "block"}
-            if source_kind in ("carbon_felt", "porousdiff_gallery")
-            else {"display": "none"}
-        )
-        show_porosity = (
-            {"display": "none"}
-            if source_kind in (
-                "user_upload",
-                "benchmark_dataset",
-                "open_cube",
-                "porousdiff_gallery",
-            )
-            else {"display": "block"}
-        )
-        show_seed = {"display": "none"} if is_fixed else {"display": "block"}
-        return show_upload, show_vcomp, show_grid, show_clamp, show_porosity, show_seed, is_upload
 
+    # ── 6. Operando Dataset Bounds & ROI Readouts ──
+    @app.callback(
+        Output("operando-time-slider", "max"),
+        Output("operando-time-slider", "marks"),
+        Output("operando-time-slider", "value"),
+        Output("operando-z-slider", "max"),
+        Output("operando-z-slider", "marks"),
+        Output("operando-z-slider", "value"),
+        Output("roi-x-slider", "max"),
+        Output("roi-x-slider", "marks"),
+        Output("roi-x-slider", "value"),
+        Output("roi-y-slider", "max"),
+        Output("roi-y-slider", "marks"),
+        Output("roi-y-slider", "value"),
+        Output("roi-z-slider", "max"),
+        Output("roi-z-slider", "marks"),
+        Output("roi-z-slider", "value"),
+        Input("operando-dataset-dropdown", "value"),
+        prevent_initial_call=True,
+    )
+    def _sync_operando_dataset_bounds(ds_key: str):
+        datasets = discover_operando_datasets()
+        ds = datasets.get(ds_key) or next(iter(datasets.values()))
+        nz, ny, nx = stack_dimensions(str(ds.timepoints[0].path))
+        tp_max = max(0, len(ds.timepoints) - 1)
+        tp_marks = {i: f"{tp.t_h:g}h" for i, tp in enumerate(ds.timepoints)}
+        tp_val = min(1, tp_max)
+        z_max = max(0, nz - 1)
+        z_val = min(z_max, max(0, 50 if nz <= 80 else nz // 2))
+        z_marks = {0: "0", z_max // 2: str(z_max // 2), z_max: str(z_max)}
+
+        rx = [max(0, nx // 2 - 26), min(nx, nx // 2 + 26)] if nx > 200 else [min(86, nx - 16), min(nx, 138)]
+        ry = [max(0, ny // 2 - 26), min(ny, ny // 2 + 26)] if ny > 200 else [min(54, ny - 16), min(ny, 106)]
+        rz = [max(0, z_val - 12), min(nz, z_val + 10)]
+        return (
+            tp_max,
+            tp_marks,
+            tp_val,
+            z_max,
+            z_marks,
+            z_val,
+            nx,
+            {0: "0", nx: str(nx)},
+            rx,
+            ny,
+            {0: "0", ny: str(ny)},
+            ry,
+            nz,
+            {0: "0", nz: str(nz)},
+            rz,
+        )
+
+    @app.callback(
+        Output("operando-time-readout", "children"),
+        Output("operando-z-readout", "children"),
+        Output("roi-dims-readout", "children"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("operando-time-slider", "value"),
+        Input("operando-z-slider", "value"),
+        Input("roi-x-slider", "value"),
+        Input("roi-y-slider", "value"),
+        Input("roi-z-slider", "value"),
+    )
+    def _sync_operando_readouts(
+        ds_key: str,
+        tp_idx: int,
+        z_idx: int,
+        rx: list[int],
+        ry: list[int],
+        rz: list[int],
+    ):
+        datasets = discover_operando_datasets()
+        ds = datasets.get(ds_key) or next(iter(datasets.values()))
+        idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
+        tp = ds.timepoints[idx]
+        nz, _, _ = stack_dimensions(str(tp.path))
+        dx = max(1, int(rx[1]) - int(rx[0]))
+        dy = max(1, int(ry[1]) - int(ry[0]))
+        dz = max(1, int(rz[1]) - int(rz[0]))
+        v_um = ds.voxel_size_um
+        roi_str = (
+            f"Box: {dx} x {dy} x {dz} px "
+            f"({dx * v_um:.0f} x {dy * v_um:.0f} x {dz * v_um:.0f} µm at 1x1x1)"
+        )
+        return tp.label, f"{int(z_idx or 0)} of {max(0, nz - 1)}", roi_str
+
+    # ── 7. Upload Staging & Threshold Preview ──
     @app.callback(
         Output("uploaded-file-store", "data"),
         Output("upload-status-text", "children"),
-        Output("upload-seg-drawer", "style"),
-        Output("upload-seg-mode-dropdown", "value"),
-        Output("upload-threshold-input", "value"),
+        Output("upload-dz-um", "value"),
+        Output("upload-dy-um", "value"),
+        Output("upload-dx-um", "value"),
+        Output("upload-manual-thr", "min"),
+        Output("upload-manual-thr", "max"),
+        Output("upload-manual-thr", "step"),
+        Output("upload-manual-thr", "value"),
         Input("upload-volume-box", "contents"),
         State("upload-volume-box", "filename"),
         prevent_initial_call=True,
     )
-    def stage_uploaded_volume(
-        contents: str | None,
-        filename: str | None,
-    ) -> tuple[Any, Any, dict[str, str], str, float]:
-        if not contents or not filename:
+    def _stage_user_upload(contents: str | None, filename: str | None):
+        if not contents:
             raise PreventUpdate
+        fname = filename or "uploaded_volume.tif"
         try:
-            _, b64_payload = contents.split(",", 1)
-            raw_bytes = base64.b64decode(b64_payload)
-            staged_path = stage_upload_bytes(raw_bytes, filename)
-            info = inspect_staged_volume(staged_path, display_name=filename)
+            _, b64 = contents.split(",", 1) if "," in contents else ("", contents)
+            raw_bytes = base64.b64decode(b64)
+            staged_path = stage_upload_bytes(raw_bytes, fname)
+            info = inspect_staged_volume(staged_path, display_name=fname)
+            cal = info.get("calibrated_voxel_um_zyx") or [1.0, 1.0, 1.0]
+            vmin = float(info.get("val_min", 0.0))
+            vmax = float(info.get("val_max", 255.0))
+            if vmax <= vmin:
+                vmax = vmin + 1.0
+            otsu = float(info.get("otsu_threshold", 0.5 * (vmin + vmax)))
+            step = round(max((vmax - vmin) / 100.0, 0.01), 4)
+            shp = info["shape_zyx"]
+            msg = f"Ready: {fname} ({shp[2]} x {shp[1]} x {shp[0]} px, {info['dtype']})"
+            return (
+                {"upload_path": str(staged_path), "filename": fname, "inspection": info},
+                msg,
+                float(cal[0]),
+                float(cal[1]),
+                float(cal[2]),
+                vmin,
+                vmax,
+                step,
+                otsu,
+            )
         except Exception as exc:
-            err_msg = html.Span(str(exc), style={"color": "#dc2626", "fontWeight": "600"})
-            return None, err_msg, {"display": "none"}, "otsu", 0.5
-
-        shp = info["shape_zyx"]
-        cal_um = info.get("calibrated_voxel_um_zyx")
-        cal_badge = (
-            f"Calibrated ({cal_um[0]:g}, {cal_um[1]:g}, {cal_um[2]:g}) µm"
-            if cal_um
-            else "Uncalibrated — verify (dz, dy, dx) µm"
-        )
-        default_mode = (
-            "labels"
-            if (info.get("has_embedded_labels") or info.get("is_integer_labels"))
-            else "otsu"
-        )
-        status = html.Div(
-            [
-                html.Strong(f"{info['name']} "),
-                html.Span(f"({shp[2]}×{shp[1]}×{shp[0]}, {info['dtype']}) · {cal_badge}"),
-            ]
-        )
-        return (
-            info,
-            status,
-            {"display": "flex"},
-            default_mode,
-            float(info.get("otsu_threshold", 0.5)),
-        )
-
-    @app.callback(
-        Output("voxel-dz-input", "value"),
-        Output("voxel-dy-input", "value"),
-        Output("voxel-dx-input", "value"),
-        Input("voxel-size-input", "value"),
-        Input("uploaded-file-store", "data"),
-        prevent_initial_call=True,
-    )
-    def sync_anisotropic_spacing_inputs(
-        iso_um: float | None,
-        uploaded_info: dict[str, Any] | None,
-    ) -> tuple[Any, Any, Any]:
-        trig = ctx.triggered_id
-        if trig == "uploaded-file-store" and uploaded_info:
-            cal = uploaded_info.get("calibrated_voxel_um_zyx")
-            if cal and len(cal) == 3:
-                return float(cal[0]), float(cal[1]), float(cal[2])
-        if iso_um is not None and float(iso_um) > 0:
-            v = float(iso_um)
-            return v, v, v
-        raise PreventUpdate
+            return None, f"Upload error: {exc}", 1.0, 1.0, 1.0, 0.0, 255.0, 1.0, 128.0
 
     @app.callback(
         Output("upload-preview-graph", "figure"),
-        Output("upload-manual-threshold-block", "style"),
+        Output("upload-manual-thr-wrap", "style"),
         Input("uploaded-file-store", "data"),
-        Input("upload-seg-mode-dropdown", "value"),
-        Input("upload-threshold-input", "value"),
-        Input("upload-polarity-radio", "value"),
+        Input("upload-seg-mode", "value"),
+        Input("upload-manual-thr", "value"),
+        Input("upload-contrast-radio", "value"),
         Input("theme-store", "data"),
     )
-    def render_upload_segmentation_preview(
-        uploaded_info: dict[str, Any] | None,
+    def _render_upload_preview(
+        up_data: dict | None,
         seg_mode: str,
-        manual_thr: float | None,
-        polarity: str,
-        theme: str | None,
-    ) -> tuple[Any, dict[str, str]]:
-        show_manual = {"display": "block"} if seg_mode == "manual" else {"display": "none"}
+        manual_thr: float,
+        contrast: str,
+        theme: str,
+    ):
         dark = theme == "dark"
-        if not uploaded_info:
+        thr_style = {"display": "block"} if seg_mode == "manual" else {"display": "none"}
+        if not up_data or not up_data.get("inspection"):
             return (
                 empty_placeholder_figure(
-                    "Drop a .tif, .npy, .h5, or .ome.zarr.zip above",
-                    height=220,
+                    "Drop a 3D file above to preview threshold",
+                    height=175,
                     dark_mode=dark,
                 ),
-                show_manual,
+                thr_style,
             )
         fig = build_upload_segmentation_preview_figure(
-            uploaded_info,
-            seg_mode=seg_mode or "otsu",
-            manual_threshold=manual_thr,
-            dark_is_pore=(polarity != "bright"),
+            up_data["inspection"],
+            seg_mode=seg_mode,
+            manual_threshold=float(manual_thr or 0.0),
+            dark_is_pore=(contrast != "bright"),
+            height=175,
             dark_mode=dark,
         )
-        return fig, show_manual
+        return fig, thr_style
 
+    # ── 8. Unified Simulation Executor & Slice-Mode Switcher ──
     @app.callback(
         Output("active-run-id-store", "data"),
         Output("run-history-store", "data"),
-        Output("source-kind-dropdown", "value"),
-        Output("grid-side-slider", "value"),
-        Output("voxel-size-input", "value"),
-        Output("clamping-kpa-slider", "value"),
-        Output("porosity-slider", "value"),
-        Output("conducting-phase-dropdown", "value"),
-        Output("electrode-role-dropdown", "value"),
-        Output("homogenisation-check", "value"),
-        Output("run-error-banner", "children"),
-        Input("run-pipeline-btn", "n_clicks"),
-        Input("run-batch-sweep-btn", "n_clicks"),
-        Input("preset-btn-carbon", "n_clicks"),
-        Input("preset-btn-cathode", "n_clicks"),
+        Output("slice-display-mode", "value"),
+        Input("sample-mode-radio", "value"),
+        Input("run-generate-btn", "n_clicks"),
+        Input("new-seed-btn", "n_clicks"),
+        Input("simulate-roi-btn", "n_clicks"),
+        Input("run-upload-btn", "n_clicks"),
+        Input("run-suggested-load-btn", "n_clicks"),
+        Input("run-5pt-sweep-btn", "n_clicks"),
+        Input("guide-sweep-btn", "n_clicks"),
         Input("preset-btn-cube", "n_clicks"),
         Input("preset-btn-spheres", "n_clicks"),
-        Input("run-suggested-setpoint-btn", "n_clicks"),
-        Input("reset-campaign-btn", "n_clicks"),
-        Input("upload-campaign-box", "contents"),
+        Input("preset-btn-cathode", "n_clicks"),
+        Input("load-campaign-upload", "contents"),
         State("source-kind-dropdown", "value"),
-        State("grid-side-slider", "value"),
-        State("voxel-size-input", "value"),
-        State("voxel-dz-input", "value"),
-        State("voxel-dy-input", "value"),
-        State("voxel-dx-input", "value"),
         State("clamping-kpa-slider", "value"),
-        State("virtual-compress-slider", "value"),
         State("porosity-slider", "value"),
-        State("seed-input", "value"),
-        State("conducting-phase-dropdown", "value"),
+        State("grid-size-dropdown", "value"),
+        State("voxel-um-input", "value"),
         State("electrode-role-dropdown", "value"),
-        State("solver-backend-dropdown", "value"),
-        State("homogenisation-check", "value"),
-        State("chemistry-preset-dropdown", "value"),
+        State("physics-options-check", "value"),
+        State("chemistry-dropdown", "value"),
+        State("seed-store", "data"),
+        State("operando-dataset-dropdown", "value"),
+        State("operando-time-slider", "value"),
+        State("roi-x-slider", "value"),
+        State("roi-y-slider", "value"),
+        State("roi-z-slider", "value"),
         State("uploaded-file-store", "data"),
-        State("upload-seg-mode-dropdown", "value"),
-        State("upload-threshold-input", "value"),
-        State("upload-polarity-radio", "value"),
-        State("upload-coarsen-dropdown", "value"),
+        State("upload-seg-mode", "value"),
+        State("upload-manual-thr", "value"),
+        State("upload-contrast-radio", "value"),
+        State("upload-dz-um", "value"),
+        State("upload-dy-um", "value"),
+        State("upload-dx-um", "value"),
+        State("virtual-compress-slider", "value"),
         State("suggested-kpa-store", "data"),
+        State("active-run-id-store", "data"),
         State("run-history-store", "data"),
-        State("twin-w-ion-slider", "value"),
-        State("twin-w-elec-slider", "value"),
-        State("twin-w-kin-slider", "value"),
-        State("twin-sigma-kappa-slider", "value"),
         prevent_initial_call=True,
     )
-    def execute_run_or_preset(
-        _n_run: int,
-        _n_batch: int,
-        _n_p1: int,
-        _n_p2: int,
-        _n_p3: int,
-        _n_p4: int,
+    def _execute_simulation_or_mode_switch(
+        sample_mode: str,
+        _n_gen: int,
+        _n_seed: int,
+        _n_roi: int,
+        _n_up: int,
         _n_sug: int,
-        _n_reset: int,
-        campaign_upload_contents: str | None,
+        _n_swp1: int,
+        _n_swp2: int,
+        _n_cube: int,
+        _n_sph: int,
+        _n_cath: int,
+        campaign_contents: str | None,
         source_kind: str,
-        grid_side: int,
-        voxel_um: float | None,
-        voxel_dz: float | None,
-        voxel_dy: float | None,
-        voxel_dx: float | None,
         clamping_kpa: float,
-        virtual_strain: float | None,
         porosity: float,
-        seed: int | None,
-        conducting_phase: int | None,
-        electrode_role: str | None,
-        solver_backend: str,
-        check_flags: list[str] | None,
-        chemistry_preset: str | None,
-        uploaded_info: dict[str, Any] | None,
-        seg_mode: str | None,
-        manual_thr: float | None,
-        polarity: str | None,
-        coarsen_policy: str | None,
-        suggested_val: float | None,
-        history: list[dict[str, Any]] | None,
-        w_ion: float | None,
-        w_elec: float | None,
-        w_kin: float | None,
-        sigma_kappa: float | None,
-    ) -> tuple[Any, ...]:
+        grid_side: int,
+        voxel_um: float,
+        electrode_role: str,
+        phys_opts: list[str] | None,
+        chem_key: str,
+        seed_val: int,
+        ds_key: str,
+        tp_idx: int,
+        rx: list[int],
+        ry: list[int],
+        rz: list[int],
+        up_data: dict | None,
+        up_seg_mode: str,
+        up_manual_thr: float,
+        up_contrast: str,
+        up_dz: float,
+        up_dy: float,
+        up_dx: float,
+        vcomp_pct: float,
+        suggested_kpa: float,
+        cur_run_id: str | None,
+        history: list[dict] | None,
+    ):
         trig = ctx.triggered_id
-        if trig is None:
-            raise PreventUpdate
-
-        if trig == "reset-campaign-btn":
-            fresh_hist = initial_history_records(registry)
-            def_id = registry.default_run_id or (
-                fresh_hist[0]["run_id"] if fresh_hist else no_update
-            )
+        if trig == "sample-mode-radio":
             return (
-                def_id,
-                fresh_hist,
-                "carbon_felt",
-                48,
-                1.6,
-                150.0,
-                0.84,
-                0,
-                "negative",
-                [],
-                None,
+                no_update,
+                no_update,
+                "xray" if sample_mode == "xray" else "sim",
             )
 
-        if trig == "upload-campaign-box":
-            if not campaign_upload_contents:
+        opts = set(phys_opts or [])
+        want_sms = "sms" in opts and has_sms_backend()
+        want_homog = "homog" in opts
+        want_rev = "rev" in opts
+        side = max(16, min(96, int(grid_side or 48)))
+        v_um = max(0.05, float(voxel_um or 1.6))
+        seed = int(seed_val or 42)
+        if trig == "new-seed-btn":
+            seed = ((seed * 73 + 19) % 8999) + 100
+
+        # Campaign JSON import
+        if trig == "load-campaign-upload":
+            if not campaign_contents:
                 raise PreventUpdate
-            try:
-                _, b64_camp = campaign_upload_contents.split(",", 1)
-                loaded_hist = parse_campaign_json(base64.b64decode(b64_camp).decode("utf-8"))
-                last_item = loaded_hist[-1]
-                rehydrated = registry.get_or_rehydrate(last_item["run_id"], loaded_hist)
-                act_id = last_item["run_id"] if rehydrated else registry.default_run_id
-                return (
-                    act_id,
-                    loaded_hist,
-                    last_item.get("source_kind", "carbon_felt"),
-                    no_update,
-                    no_update,
-                    float(last_item.get("clamping_kpa", 150.0)),
-                    float(last_item.get("porosity", 0.74)),
-                    no_update,
-                    no_update,
-                    no_update,
-                    None,
-                )
-            except Exception as exc:
-                return (
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    html.Div(f"Campaign load failed: {exc}", className="error-box"),
-                )
+            _, b64 = (
+                campaign_contents.split(",", 1)
+                if "," in campaign_contents
+                else ("", campaign_contents)
+            )
+            raw_json = base64.b64decode(b64).decode("utf-8")
+            imported = parse_campaign_json(raw_json)
+            last_id = imported[-1]["run_id"]
+            registry.get_or_rehydrate(last_id, imported)
+            return last_id, imported, "sim"
 
-        preset_map = {
-            "preset-btn-carbon": "carbon_felt_compression",
-            "preset-btn-cathode": "composite_cathode_3phase",
-            "preset-btn-cube": "teaching_analytical_cube",
-            "preset-btn-spheres": "teaching_sphere_pack",
-        }
-        weights = (
-            float(w_ion if w_ion is not None else 0.58),
-            float(w_elec if w_elec is not None else 0.27),
-            float(w_kin if w_kin is not None else 0.15),
-        )
-        sig_kap = float(sigma_kappa if sigma_kappa is not None else 16.0)
-        chem_key = str(chemistry_preset or "nmc811_li_ion")
-        flags = set(check_flags or [])
+        # 1-Click Guide Presets
+        if trig in ("preset-btn-cube", "preset-btn-spheres", "preset-btn-cathode"):
+            pkey = {
+                "preset-btn-cube": "teaching_analytical_cube",
+                "preset-btn-spheres": "teaching_sphere_pack",
+                "preset-btn-cathode": "composite_cathode_3phase",
+            }[trig]
+            preset = PRESETS[pkey]
+            p_side = min(48, preset.microstructure.shape[0])
+            ms = MicrostructureSpec(
+                **{**preset.microstructure.to_dict(), "shape": (p_side, p_side, p_side)}
+            )
+            ss = SolveSpec(
+                **{
+                    **preset.solve.to_dict(),
+                    "compute_mechanics": want_sms and ms.source_kind != "open_cube",
+                    "chemistry_preset": chem_key or "nmc811_li_ion",
+                }
+            )
+            executed = run_transport_pipeline(ms, ss)
+            rid = registry.put(executed)
+            return rid, _append_history(history, _history_entry_from_run(executed)), "sim"
 
-        try:
-            # Resolve anisotropic (dz, dy, dx) vs isotropic voxel_size_um
-            vz: tuple[float, float, float] | None
-            if (
-                voxel_dz is not None
-                and voxel_dy is not None
-                and voxel_dx is not None
-                and float(voxel_dz) > 0
-                and float(voxel_dy) > 0
-                and float(voxel_dx) > 0
-            ):
-                vz = (float(voxel_dz), float(voxel_dy), float(voxel_dx))
-            elif voxel_um is not None and float(voxel_um) > 0:
-                vz = (float(voxel_um), float(voxel_um), float(voxel_um))
-            else:
-                vz = None
-
-            if trig == "run-batch-sweep-btn":
-                # 1-Click 5-Point Campaign Sweep (uses 40^3 on synthetic grids so 5 solves complete in ~3 s)
-                sweep_side = min(int(grid_side or 48), 48)
-                sd = int(seed if seed is not None else 42)
-                role = str(electrode_role or "negative")
-                cond_id = int(conducting_phase if conducting_phase is not None else 0)
-                solid_p = () if source_kind == "open_cube" else ((0,) if cond_id == 1 else (1, 2))
-                phase_diffs = (
-                    {0: 1.0, 1: 0.0, 2: 0.18}
-                    if (source_kind == "multiphase_electrode" and cond_id == 0)
-                    else None
-                )
-                sweep_sspec = SolveSpec(
-                    conducting_phase=cond_id,
-                    solid_phases=solid_p,
-                    phase_diffusivities=phase_diffs,
+        # 5-Load Compression Sweep
+        if trig in ("run-5pt-sweep-btn", "guide-sweep-btn"):
+            hist_out = list(history or [])
+            last_id = cur_run_id
+            for load_kpa in (35.0, 95.0, 165.0, 260.0, 410.0):
+                ms = make_carbon_felt_spec(load_kpa, shape=(36, 36, 36), seed=seed)
+                ss = SolveSpec(
                     directions=("x", "y", "z"),
-                    solver=solver_backend,  # type: ignore[arg-type]
-                    compute_homogenisation=False,
-                    compute_solid_wiring=(source_kind != "open_cube"),
-                    compute_rev_study=False,
-                    compute_mechanics=("sms" in flags),
-                    chemistry_preset=chem_key,
-                    return_fields=True,
-                    field_direction="z",
-                    r_cell_weights=weights,
-                    sigma_over_kappa_bulk=sig_kap,
+                    solid_phases=(1, 2),
+                    compute_mechanics=want_sms,
+                    chemistry_preset=chem_key or "vrfb_carbon_felt",
                 )
+                ex = run_transport_pipeline(ms, ss)
+                last_id = registry.put(ex)
+                hist_out = _append_history(hist_out, _history_entry_from_run(ex))
+            return last_id, hist_out, "sim"
 
-                sweep_specs: list[MicrostructureSpec] = []
-                if source_kind in ("carbon_felt", "porousdiff_gallery"):
-                    for kpa in (40.0, 110.0, 190.0, 290.0, 420.0):
-                        base_f = make_carbon_felt_spec(kpa, shape=(sweep_side, sweep_side, sweep_side), seed=sd)
-                        sweep_specs.append(
-                            MicrostructureSpec(
-                                **{
-                                    **base_f.to_dict(),
-                                    "source_kind": source_kind,
-                                    "voxel_size_um": vz or (1.6, 1.6, 1.6),
-                                    "electrode_role": role,
-                                }
-                            )
-                        )
-                elif source_kind == "user_upload":
-                    if not uploaded_info or not uploaded_info.get("path"):
-                        raise ValueError("Upload a volume first to run a 5-point virtual compression sweep.")
-                    mode = str(seg_mode or "otsu").lower()
-                    thr_arg: float | str | None = (
-                        float(manual_thr if manual_thr is not None else uploaded_info.get("otsu_threshold", 0.5))
-                        if mode == "manual"
-                        else ("labels" if mode == "labels" else "otsu")
-                    )
-                    for vs in (0.0, 0.10, 0.20, 0.30, 0.40):
-                        sweep_specs.append(
-                            MicrostructureSpec(
-                                source_kind="user_upload",
-                                label=f"Upload {uploaded_info['name']} (ε_z={vs:.0%})",
-                                upload_path=str(uploaded_info["path"]),
-                                voxel_size_um=vz,
-                                threshold=thr_arg,
-                                dark_is_pore=(polarity != "bright"),
-                                virtual_compression_strain=vs,
-                                electrode_role=role,  # type: ignore[arg-type]
-                            )
-                        )
-                elif source_kind == "benchmark_dataset":
-                    for vs in (0.0, 0.10, 0.20, 0.30, 0.40):
-                        sweep_specs.append(
-                            MicrostructureSpec(
-                                source_kind="benchmark_dataset",
-                                label=f"Sphere Pack (ε_z={vs:.0%})",
-                                dataset_name="sphere_pack",
-                                voxel_size_um=vz or (1.0, 1.0, 1.0),
-                                virtual_compression_strain=vs,
-                                electrode_role=role,  # type: ignore[arg-type]
-                            )
-                        )
-                else:
-                    for eps_p in (0.36, 0.48, 0.60, 0.72, 0.84):
-                        sweep_specs.append(
-                            MicrostructureSpec(
-                                source_kind=source_kind,  # type: ignore[arg-type]
-                                label=f"{source_kind} (ε={eps_p:.2f})",
-                                shape=(sweep_side, sweep_side, sweep_side),
-                                voxel_size_um=vz or (1.2, 1.2, 1.2),
-                                porosity=eps_p,
-                                seed=sd,
-                                electrode_role=role,  # type: ignore[arg-type]
-                            )
-                        )
+        # Bayesian GP Recommended Load
+        if trig == "run-suggested-load-btn":
+            kpa_run = float(suggested_kpa or 220.0)
+            ms = MicrostructureSpec(
+                source_kind="porousdiff_gallery",
+                label=f"PorousDiff Carbon Felt ({kpa_run:.0f} kPa)",
+                shape=(side, side, side),
+                voxel_size_um=(v_um, v_um, v_um),
+                porosity=float(porosity or 0.78),
+                clamping_kpa=kpa_run,
+                compression_strain=-1.0,
+                seed=seed,
+                electrode_role=electrode_role or "negative",
+            )
+            ss = SolveSpec(
+                directions=("x", "y", "z"),
+                solid_phases=(1, 2),
+                compute_mechanics=want_sms,
+                chemistry_preset=chem_key or "nmc811_li_ion",
+            )
+            ex = run_transport_pipeline(ms, ss)
+            rid = registry.put(ex)
+            return rid, _append_history(history, _history_entry_from_run(ex)), "sim"
 
-                new_hist = list(history or [])
-                last_exec: ExecutedRun | None = None
-                for sp_item in sweep_specs:
-                    last_exec = run_transport_pipeline(sp_item, sweep_sspec)
-                    registry.put(last_exec)
-                    new_hist.append(_history_entry_from_run(last_exec))
-                assert last_exec is not None
-                mspec = sweep_specs[-1]
-                sspec = sweep_sspec
-                executed = last_exec
-                rid = executed.summary.run_id
+        # Simulate Selected Native 1x1x1 X-ray Region (BatteryExplorer -> OpenImpala + SMS)
+        if trig == "simulate-roi-btn":
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
+            tp = ds.timepoints[idx]
+            pristine_path = str(ds.timepoints[0].path)
+            roi_vol, thr_used = extract_native_roi_volume(
+                str(tp.path),
+                x_range=(int(rx[0]), int(rx[1])),
+                y_range=(int(ry[0]), int(ry[1])),
+                z_range=(int(rz[0]), int(rz[1])),
+                voxel_size_um=ds.voxel_size_um,
+                threshold_mode="midpoint",
+                pristine_ref_path=pristine_path,
+            )
+            ms = MicrostructureSpec(
+                source_kind="benchmark_dataset",
+                label=f"X-ray region ({tp.label}, Z {rz[0]}–{rz[1]})",
+                shape=roi_vol.shape,
+                voxel_size_um=(ds.voxel_size_um, ds.voxel_size_um, ds.voxel_size_um),
+                electrode_role="negative",
+            )
+            ss = SolveSpec(
+                conducting_phase=0,
+                solid_phases=(1,),
+                directions=("x", "y", "z"),
+                compute_homogenisation=want_homog,
+                compute_rev_study=want_rev,
+                compute_mechanics=want_sms,
+                chemistry_preset=chem_key or "nmc811_li_ion",
+            )
+            ex = run_transport_pipeline(ms, ss, existing_volume=roi_vol)
+            rid = registry.put(ex)
+            return rid, _append_history(history, _history_entry_from_run(ex)), "sim"
+
+        # Simulate Uploaded Experimental Scan
+        if trig == "run-upload-btn":
+            if not up_data or not up_data.get("upload_path"):
+                raise PreventUpdate
+            thr_spec: float | str | None
+            if up_seg_mode == "manual":
+                thr_spec = float(up_manual_thr or 128.0)
+            elif up_seg_mode == "labels":
+                thr_spec = "labels"
             else:
-                if trig in preset_map:
-                    preset = PRESETS[preset_map[trig]]
-                    side = min(int(preset.microstructure.shape[0]), 64)
-                    mspec = MicrostructureSpec(
-                        **{**preset.microstructure.to_dict(), "shape": (side, side, side)}
-                    )
-                    sspec = SolveSpec(
-                        **{
-                            **preset.solve.to_dict(),
-                            "compute_mechanics": ("sms" in flags),
-                            "chemistry_preset": chem_key,
-                            "r_cell_weights": weights,
-                            "sigma_over_kappa_bulk": sig_kap,
-                        }
-                    )
-                elif trig == "run-suggested-setpoint-btn":
-                    target_kpa = float(suggested_val if suggested_val is not None else 220.0)
-                    side = int(grid_side or 48)
-                    mspec = make_carbon_felt_spec(
-                        target_kpa,
-                        shape=(side, side, side),
-                        seed=int(seed if seed is not None else 42),
-                    )
-                    base_solve = PRESETS["carbon_felt_compression"].solve
-                    sspec = SolveSpec(
-                        **{
-                            **base_solve.to_dict(),
-                            "compute_mechanics": ("sms" in flags),
-                            "chemistry_preset": chem_key,
-                            "r_cell_weights": weights,
-                            "sigma_over_kappa_bulk": sig_kap,
-                        }
-                    )
-                else:
-                    side = int(grid_side or 48)
-                    sd = int(seed if seed is not None else 42)
-                    role = str(electrode_role or "negative")
-                    v_strain = float(virtual_strain or 0.0)
+                thr_spec = "otsu"
 
-                    if source_kind == "carbon_felt":
-                        base_felt = make_carbon_felt_spec(
-                            float(clamping_kpa),
-                            shape=(side, side, side),
-                            seed=sd,
-                        )
-                        mspec = MicrostructureSpec(
-                            **{
-                                **base_felt.to_dict(),
-                                "voxel_size_um": vz,
-                                "porosity": float(porosity),
-                                "electrode_role": role,
-                            }
-                        )
-                    elif source_kind == "user_upload":
-                        if not uploaded_info or not uploaded_info.get("path"):
-                            raise ValueError(
-                                "Upload a .tif, .npy, .h5, or .ome.zarr.zip volume before running."
-                            )
-                        mode = str(seg_mode or "otsu").lower()
-                        if mode == "manual":
-                            thr_arg = float(
-                                manual_thr
-                                if manual_thr is not None
-                                else uploaded_info.get("otsu_threshold", 0.5)
-                            )
-                        elif mode == "labels":
-                            thr_arg = "labels"
-                        else:
-                            thr_arg = "otsu"
-
-                        cal_orig = uploaded_info.get("calibrated_voxel_um_zyx")
-                        override_cal = False
-                        if cal_orig and vz is not None:
-                            override_cal = any(
-                                abs(float(vz[i]) - float(cal_orig[i])) > 1e-4 for i in range(3)
-                            )
-
-                        mspec = MicrostructureSpec(
-                            source_kind="user_upload",
-                            label=f"Upload: {uploaded_info['name']}",
-                            shape=(side, side, side),
-                            voxel_size_um=vz,
-                            seed=sd,
-                            upload_path=str(uploaded_info["path"]),
-                            threshold=thr_arg,
-                            dark_is_pore=(polarity != "bright"),
-                            override_calibrated_spacing=override_cal,
-                            virtual_compression_strain=v_strain,
-                            coarsen_policy=(
-                                "mode_downsample"
-                                if coarsen_policy == "mode_downsample"
-                                else "crop_center"
-                            ),
-                            electrode_role=role,  # type: ignore[arg-type]
-                        )
-                    else:
-                        mspec = MicrostructureSpec(
-                            source_kind=source_kind,  # type: ignore[arg-type]
-                            label=f"{source_kind} ({side}³)",
-                            shape=(side, side, side),
-                            voxel_size_um=vz,
-                            seed=sd,
-                            porosity=float(porosity),
-                            clamping_kpa=float(clamping_kpa),
-                            virtual_compression_strain=(
-                                v_strain if source_kind == "benchmark_dataset" else 0.0
-                            ),
-                            dataset_name=(
-                                "sphere_pack" if source_kind == "benchmark_dataset" else None
-                            ),
-                            electrode_role=role,  # type: ignore[arg-type]
-                        )
-
-                    cond_id = int(conducting_phase if conducting_phase is not None else 0)
-                    phase_diffs = (
-                        {0: 1.0, 1: 0.0, 2: 0.18}
-                        if (mspec.source_kind == "multiphase_electrode" and cond_id == 0)
-                        else None
-                    )
-                    if mspec.source_kind == "open_cube":
-                        solid_p = ()
-                    elif cond_id == 1:
-                        solid_p = (0,)
-                    else:
-                        solid_p = (1, 2)
-
-                    sspec = SolveSpec(
-                        conducting_phase=cond_id,
-                        solid_phases=solid_p,
-                        phase_diffusivities=phase_diffs,
-                        directions=("x", "y", "z"),
-                        solver=solver_backend,  # type: ignore[arg-type]
-                        compute_homogenisation=("homog" in flags),
-                        compute_solid_wiring=(mspec.source_kind != "open_cube"),
-                        compute_rev_study=("rev" in flags),
-                        compute_mechanics=("sms" in flags),
-                        chemistry_preset=chem_key,
-                        return_fields=True,
-                        field_direction="z",
-                        r_cell_weights=weights,
-                        sigma_over_kappa_bulk=sig_kap,
-                    )
-
-                executed = run_transport_pipeline(mspec, sspec)
-                rid = registry.put(executed)
-                new_hist = list(history or [])
-                new_hist.append(_history_entry_from_run(executed))
-
-            vz_out = executed.summary.voxel_size_um_zyx[2]
-            checks_out = []
-            if sspec.compute_homogenisation:
-                checks_out.append("homog")
-            if sspec.compute_rev_study:
-                checks_out.append("rev")
-            if sspec.compute_mechanics:
-                checks_out.append("sms")
-
-            return (
-                rid,
-                new_hist,
-                mspec.source_kind,
-                min(96, max(32, int(executed.phase_volume.shape[0]))),
-                vz_out,
-                float(mspec.clamping_kpa),
-                float(mspec.porosity),
-                int(sspec.conducting_phase),
-                mspec.electrode_role,
-                checks_out,
-                None,
+            ms = MicrostructureSpec(
+                source_kind="user_upload",
+                label=f"Uploaded scan ({up_data.get('filename', 'volume')})",
+                upload_path=str(up_data["upload_path"]),
+                voxel_size_um=(
+                    max(0.01, float(up_dz or 1.0)),
+                    max(0.01, float(up_dy or 1.0)),
+                    max(0.01, float(up_dx or 1.0)),
+                ),
+                threshold=thr_spec,
+                dark_is_pore=(up_contrast != "bright"),
+                virtual_compression_strain=round(float(vcomp_pct or 0.0) / 100.0, 4),
+                electrode_role=electrode_role or "negative",
             )
-        except Exception as exc:
-            err_div = html.Div(str(exc), className="error-box")
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                err_div,
+            ss = SolveSpec(
+                conducting_phase=0,
+                solid_phases=(1, 2),
+                directions=("x", "y", "z"),
+                compute_homogenisation=want_homog,
+                compute_rev_study=want_rev,
+                compute_mechanics=want_sms,
+                chemistry_preset=chem_key or "nmc811_li_ion",
             )
+            ex = run_transport_pipeline(ms, ss)
+            rid = registry.put(ex)
+            return rid, _append_history(history, _history_entry_from_run(ex)), "sim"
 
-    @app.callback(
-        Output("main-tabs", "value"),
-        Output("slice-plane-radio", "value"),
-        Output("slice-layer-radio", "value"),
-        Input("jump-roi-btn", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def jump_to_bottleneck_roi(n_clicks: int) -> tuple[str, str, str]:
-        if not n_clicks:
-            raise PreventUpdate
-        return "tab-2d", "xz", "flux"
+        # Default: Generate & Simulate (PorousDiff AI or Synthetic Generator)
+        kpa_val = float(clamping_kpa if clamping_kpa is not None else 150.0)
+        eps_val = float(porosity if porosity is not None else 0.78)
+        label_map = {
+            "porousdiff_gallery": f"PorousDiff Carbon Felt ({kpa_val:.0f} kPa)",
+            "carbon_felt": f"Custom Carbon Felt ({kpa_val:.0f} kPa)",
+            "multiphase_electrode": f"3-Phase Cathode ({eps_val * 100:.0f}% pore)",
+            "overlapping_spheres": f"Sphere Packing ({eps_val * 100:.0f}% pore)",
+            "gaussian_blobs": f"Porous Foam ({eps_val * 100:.0f}% pore)",
+            "benchmark_dataset": "Benchmark 8-Sphere Pack",
+            "open_cube": "Straight-Channel Test Cube",
+        }
+        solid_phases = () if source_kind == "open_cube" else (1, 2)
+        phase_diffs = (
+            {0: 1.0, 1: 0.0, 2: 0.18}
+            if source_kind == "multiphase_electrode"
+            else {0: 1.0, 1: 0.0}
+        )
+        ms = MicrostructureSpec(
+            source_kind=source_kind,  # type: ignore[arg-type]
+            label=label_map.get(source_kind, source_kind),
+            shape=(side, side, side),
+            voxel_size_um=(v_um, v_um, v_um),
+            seed=seed,
+            porosity=1.0 if source_kind == "open_cube" else eps_val,
+            clamping_kpa=kpa_val,
+            compression_strain=-1.0 if source_kind in ("carbon_felt", "porousdiff_gallery") else 0.0,
+            electrode_role=electrode_role or "negative",
+        )
+        ss = SolveSpec(
+            conducting_phase=0,
+            solid_phases=solid_phases,
+            phase_diffusivities=phase_diffs,
+            directions=("x", "y", "z"),
+            compute_homogenisation=want_homog or source_kind == "multiphase_electrode",
+            compute_rev_study=want_rev,
+            compute_solid_wiring=(source_kind != "open_cube"),
+            compute_mechanics=want_sms and source_kind != "open_cube",
+            chemistry_preset=chem_key or "nmc811_li_ion",
+        )
+        ex = run_transport_pipeline(ms, ss)
+        rid = registry.put(ex)
+        return rid, _append_history(history, _history_entry_from_run(ex)), "sim"
 
+    # ── 9. Solved-Sample Slice Slider Bounds & Jump to Bottleneck ──
     @app.callback(
-        Output("slice-index-slider", "max"),
-        Output("slice-index-slider", "value"),
+        Output("run-slice-slider", "max"),
+        Output("run-slice-slider", "value"),
+        Output("run-slice-slider", "marks"),
         Input("active-run-id-store", "data"),
         Input("slice-plane-radio", "value"),
         Input("jump-roi-btn", "n_clicks"),
         State("run-history-store", "data"),
     )
-    def sync_slice_slider_bounds(
+    def _sync_run_slice_slider(
         run_id: str | None,
         plane: str,
         _n_jump: int,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[int, int]:
+        history: list[dict] | None,
+    ):
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
-            return 47, 24
+            return 47, 24, {0: "0", 24: "24", 47: "47"}
         max_idx, mid_idx = plane_slider_bounds_for_run(run, plane)
-        return max(1, max_idx), mid_idx
+        marks = {0: "0", max_idx // 2: str(max_idx // 2), max_idx: str(max_idx)}
+        return max_idx, mid_idx, marks
 
+    # ── 10. Primary Viewport Renderer (Lazy X-ray PNG OR Solved Sample PNG) ──
     @app.callback(
-        Output("preset-context-banner", "children"),
-        Output("kpi-cards-row", "children"),
-        Output("pybamm-bpx-preview", "children"),
-        Input("active-run-id-store", "data"),
-        State("run-history-store", "data"),
-    )
-    def render_summary_strip(
-        run_id: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[Any, list[Any], str]:
-        run = registry.get_or_rehydrate(run_id, history)
-        if run is None:
-            return html.Div("No active run."), [], "{}"
-
-        s = run.summary
-        tz = s.directional.get("z")
-        tx = s.directional.get("x")
-        ty = s.directional.get("y")
-        tau_z_str = f"{tz.tortuosity:.3f}" if (tz and tz.tortuosity is not None) else "No perc."
-        deff_z_str = f"{tz.effective_diffusivity:.3f}" if tz else "0.000"
-        inplane_tau = (
-            0.5 * ((tx.tortuosity or 0.0) + (ty.tortuosity or 0.0))
-            if (tx and ty and tx.tortuosity and ty.tortuosity)
-            else None
-        )
-        aniso_str = (
-            f"τ_xy = {inplane_tau:.3f} ({s.anisotropy_ratio_z_over_xy:.2f}× Z/XY)"
-            if (inplane_tau and s.anisotropy_ratio_z_over_xy)
-            else "Isotropic / 1D"
-        )
-
-        vz = s.voxel_size_um_zyx
-        vox_badge = (
-            f"{vz[0]:g} µm"
-            if (abs(vz[0] - vz[1]) < 1e-4 and abs(vz[0] - vz[2]) < 1e-4)
-            else f"({vz[0]:g}, {vz[1]:g}, {vz[2]:g}) µm"
-        )
-
-        mech_pill = []
-        if s.mechanics and s.mechanics.get("backend") == "sms-fortran":
-            mech_pill = [
-                html.Span(
-                    f"SMS E_eff: {s.mechanics['effective_modulus_gpa']:.3f} GPa",
-                    className="pill",
-                )
-            ]
-
-        banner = [
-            html.Div(
-                children=[
-                    html.Span(f"origin: {s.data_origin}", className="pill pill-origin"),
-                    html.Span(f"role: {s.electrode_role}", className="pill"),
-                    html.Span(f"solver: {s.solver_backend}", className="pill"),
-                    *mech_pill,
-                    html.Span(
-                        f"{s.shape_zyx[2]}×{s.shape_zyx[1]}×{s.shape_zyx[0]} @ {vox_badge}",
-                        className="pill",
-                    ),
-                    html.Strong(s.label, style={"fontSize": "15px", "marginLeft": "4px"}),
-                    html.Div(
-                        f"{s.precision_tag}"
-                        + (f" · {s.coarsened_note}" if s.coarsened_note else ""),
-                        style={
-                            "fontSize": "12px",
-                            "color": "var(--text-muted)",
-                            "marginTop": "3px",
-                        },
-                    ),
-                ]
-            ),
-            html.Div(
-                f"Gen {s.generation_time_s*1000:.0f} ms · Solve {s.solve_time_s:.2f} s · OpenImpala v{s.openimpala_version}",
-                style={
-                    "fontSize": "12px",
-                    "fontWeight": "600",
-                    "color": "var(--text-secondary)",
-                },
-            ),
-        ]
-
-        phase_label = (
-            f"Conducting Phase ({s.conducting_phase}) ε"
-            if s.conducting_phase != 0
-            else "Conducting Porosity ε"
-        )
-        clim = (s.electrochem or {}).get("limiting_c_rate", 0.0)
-        cards = [
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div(phase_label, className="kpi-label"),
-                    html.Div(f"{s.porosity:.4f}", className="kpi-value"),
-                    html.Div(f"{s.porosity*100:.1f}% volume fraction", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Through-Plane Tortuosity τ_Z", className="kpi-label"),
-                    html.Div(tau_z_str, className="kpi-value"),
-                    html.Div(aniso_str, className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Effective Diffusivity D_eff,Z / D_0", className="kpi-label"),
-                    html.Div(deff_z_str, className="kpi-value"),
-                    html.Div(
-                        f"MacMullin N_M = {tz.macmullin_number:.2f}"
-                        if (tz and tz.macmullin_number)
-                        else "Unpercolated",
-                        className="kpi-sub",
-                    ),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Specific Surface Area (2/3 CC)", className="kpi-label"),
-                    html.Div(f"{s.specific_surface_area_m_inv:,.0f}", className="kpi-value"),
-                    html.Div("m⁻¹ (Cauchy–Crofton unbiased)", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Limiting C-Rate C_lim", className="kpi-label"),
-                    html.Div(f"{clim:.2f}C", className="kpi-value"),
-                    html.Div(
-                        f"σ_eff,Z = {s.solid_effective_conductivity_z:.3f}"
-                        if s.solid_through_plane_percolates
-                        else "Salt-depletion threshold",
-                        className="kpi-sub",
-                    ),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Series Cell Resistance R_cell", className="kpi-label"),
-                    html.Div(f"{s.cell_resistance_fom:.3f}", className="kpi-value"),
-                    html.Div("Digital-twin objective (lower = better)", className="kpi-sub"),
-                ],
-            ),
-        ]
-
-        readout: dict[str, Any] = {
-            "electrode_role": s.electrode_role,
-            "pybamm_parameters": s.pybamm_parameters,
-            "homogenised_tensor_xyz": s.homogenised_tensor_xyz,
-            "mechanics": s.mechanics,
-            "phase_fractions": s.phase_fractions,
-        }
-        if s.rev_sizes_vox:
-            readout["rev_study"] = {
-                "sizes_vox": s.rev_sizes_vox,
-                "deff_mean": s.rev_deff_mean,
-                "deff_std": s.rev_deff_std,
-            }
-        return banner, cards, json.dumps(readout, indent=2)
-
-    @app.callback(
-        Output("slice-heatmap-graph", "figure"),
-        Output("directional-profile-graph", "figure"),
+        Output("primary-slice-img", "src"),
+        Output("primary-caption-left", "children"),
+        Output("primary-caption-right", "children"),
+        Output("slice-plane-radio", "style"),
+        Output("slice-layer-radio", "style"),
+        Output("sim-slice-scrub-row", "style"),
+        Input("slice-display-mode", "value"),
         Input("active-run-id-store", "data"),
         Input("slice-plane-radio", "value"),
         Input("slice-layer-radio", "value"),
-        Input("slice-index-slider", "value"),
-        Input("theme-store", "data"),
+        Input("run-slice-slider", "value"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("operando-cmap-dropdown", "value"),
+        Input("operando-time-slider", "value"),
+        Input("operando-z-slider", "value"),
+        Input("roi-x-slider", "value"),
+        Input("roi-y-slider", "value"),
+        Input("roi-z-slider", "value"),
         State("run-history-store", "data"),
     )
-    def render_2d_and_profile(
+    def _render_primary_viewport(
+        disp_mode: str,
         run_id: str | None,
         plane: str,
         layer: str,
-        slice_idx: int,
-        theme: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[Any, Any]:
-        dark = theme == "dark"
+        s_idx: int,
+        ds_key: str,
+        cmap: str,
+        tp_idx: int,
+        z_idx: int,
+        rx: list[int],
+        ry: list[int],
+        rz: list[int],
+        history: list[dict] | None,
+    ):
+        if disp_mode == "xray":
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
+            tp = ds.timepoints[idx]
+            zc = int(z_idx or 0)
+            s_dict = load_lazy_slice(str(tp.path), zc, cmap=cmap or "grayscale")
+            in_z = int(rz[0]) <= zc <= int(rz[1])
+            box = (int(rx[0]), int(rx[1]), int(ry[0]), int(ry[1])) if in_z else None
+            src = render_slice_with_roi_overlay(s_dict, roi_box_xy=box)
+            h_px, w_px = s_dict["orig_hw"]
+            fov_um = f"{w_px * ds.voxel_size_um:.0f} x {h_px * ds.voxel_size_um:.0f} µm"
+            cap_l = f"{ds.label} · {tp.label} · XY slice {zc}"
+            cap_r = f"{fov_um} · {s_dict['png_bytes'] // 1024} KB PNG ({s_dict['read_ms']:.1f} ms)"
+            return (
+                src,
+                cap_l,
+                cap_r,
+                {"display": "none"},
+                {"display": "none"},
+                {"display": "none"},
+            )
+
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
-            empty = empty_placeholder_figure(dark_mode=dark)
-            return empty, empty
-        fig_slice = build_slice_figure(
+            raise PreventUpdate
+        png_src, cap = render_run_slice_png(
             run,
-            plane=plane,  # type: ignore[arg-type]
-            slice_index=int(slice_idx or 0),
-            layer=layer,  # type: ignore[arg-type]
-            dark_mode=dark,
+            plane=plane or "xz",  # type: ignore[arg-type]
+            slice_index=int(s_idx or 0),
+            layer=layer or "flux",  # type: ignore[arg-type]
         )
-        fig_prof = build_directional_and_profile_figure(run, dark_mode=dark)
-        return fig_slice, fig_prof
+        nz, ny, nx = run.phase_volume.shape
+        cap_r = f"{nx} x {ny} x {nz} px"
+        return (
+            png_src,
+            cap,
+            cap_r,
+            {"display": "inline-flex"},
+            {"display": "inline-flex"},
+            {
+                "width": "100%",
+                "maxWidth": "680px",
+                "marginTop": "12px",
+                "display": "grid",
+                "gridTemplateColumns": "1fr auto",
+                "gap": "12px",
+                "alignItems": "center",
+            },
+        )
 
+    # ── 11. Right-Column Plain-English Results Table & Context Plots ──
     @app.callback(
-        Output("isosurface-3d-graph", "figure"),
-        Input("main-tabs", "value"),
+        Output("active-sample-subtitle", "children"),
+        Output("results-summary-table", "children"),
+        Output("tech-telemetry-line", "children"),
+        Output("pybamm-bpx-preview", "children"),
+        Output("compact-discharge-graph", "figure"),
+        Output("operando-echem-graph", "figure"),
+        Output("operando-structural-graph", "figure"),
+        Output("right-panel-sim-chart", "style"),
+        Output("right-panel-xray-charts", "style"),
+        Output("right-panel-3d-hist", "style"),
         Input("active-run-id-store", "data"),
-        Input("options-3d-check", "value"),
-        Input("opacity-3d-slider", "value"),
-        Input("clip-z-slider", "value"),
-        Input("clip-x-slider", "value"),
+        Input("slice-display-mode", "value"),
+        Input("main-view-tabs", "value"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("operando-time-slider", "value"),
         Input("theme-store", "data"),
         State("run-history-store", "data"),
     )
-    def render_3d_tab_gated(
-        active_tab: str,
+    def _render_right_column(
         run_id: str | None,
-        opts: list[str] | None,
-        opacity: float,
-        clip_z: list[float],
+        disp_mode: str,
+        tab_val: str,
+        ds_key: str,
+        tp_idx: int,
+        theme: str,
+        history: list[dict] | None,
+    ):
+        dark = theme == "dark"
+        run = registry.get_or_rehydrate(run_id, history)
+        if run is None:
+            raise PreventUpdate
+
+        s = run.summary
+        subtitle = (
+            f"Showing: {s.label} · "
+            f"{s.shape_zyx[2]} x {s.shape_zyx[1]} x {s.shape_zyx[0]} px "
+            f"at {s.voxel_size_um_zyx[0]:.2f} µm/px"
+        )
+        rows = html.Tbody(_build_plain_results_rows(run))
+        tech_line = (
+            f"Run {s.run_id} · origin: {s.data_origin} · role: {s.electrode_role} · "
+            f"solver: {s.solver_backend} ({s.solve_time_s * 1000:.0f} ms)"
+        )
+        bpx_text = json.dumps(
+            {
+                "pybamm_parameters": s.pybamm_parameters,
+                "bpx_excerpt": s.bpx_parameters.get("bpx", {}).get("Parameter", {}),
+            },
+            indent=2,
+        )
+        fig_dis = build_compact_discharge_figure(s.electrochem, dark_mode=dark)
+
+        show = {"display": "block"}
+        hide = {"display": "none"}
+
+        if tab_val == "tab-3d":
+            return (
+                subtitle,
+                rows,
+                tech_line,
+                bpx_text,
+                fig_dis,
+                no_update,
+                no_update,
+                hide,
+                hide,
+                show,
+            )
+
+        if disp_mode == "xray":
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
+            tp = ds.timepoints[idx]
+            df = load_echem_csv(str(ds.echem_csv))
+            paths = tuple(str(t.path) for t in ds.timepoints)
+            t_hours = [t.t_h for t in ds.timepoints]
+            m_struct = dataset_structural_metrics(paths)
+            fig_ec = build_operando_echem_figure(df, tp.t_h, dark_mode=dark)
+            fig_st = build_operando_structural_figure(m_struct, t_hours, tp.t_h, dark_mode=dark)
+            return (
+                subtitle,
+                rows,
+                tech_line,
+                bpx_text,
+                fig_dis,
+                fig_ec,
+                fig_st,
+                hide,
+                show,
+                hide,
+            )
+
+        return (
+            subtitle,
+            rows,
+            tech_line,
+            bpx_text,
+            fig_dis,
+            empty_placeholder_figure("Switch to X-ray Scans to view cycling traces", height=180, dark_mode=dark),
+            empty_placeholder_figure("", height=180, dark_mode=dark),
+            show,
+            hide,
+            hide,
+        )
+
+    # ── 12. 3D View Callback (Active Simulated Sample OR Dask-Pooled X-ray Stack/ROI) ──
+    @app.callback(
+        Output("volume-3d-graph", "figure"),
+        Output("vol-3d-hist-graph", "figure"),
+        Output("vol-3d-caption-left", "children"),
+        Output("vol-3d-caption-right", "children"),
+        Input("main-view-tabs", "value"),
+        Input("vol-source-dropdown", "value"),
+        Input("vol-threshold-slider", "value"),
+        Input("vol-rim-slider", "value"),
+        Input("vol-clip-x", "value"),
+        Input("vol-clip-y", "value"),
+        Input("vol-clip-z", "value"),
+        Input("active-run-id-store", "data"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("operando-time-slider", "value"),
+        Input("roi-x-slider", "value"),
+        Input("roi-y-slider", "value"),
+        Input("roi-z-slider", "value"),
+        Input("theme-store", "data"),
+        State("vol-opacity-slider", "value"),
+        State("run-history-store", "data"),
+    )
+    def _render_3d_view(
+        tab_val: str,
+        vol_src: str,
+        thr: float,
+        rim_cut: float,
         clip_x: list[float],
-        theme: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> Any:
-        if active_tab != "tab-3d":
+        clip_y: list[float],
+        clip_z: list[float],
+        run_id: str | None,
+        ds_key: str,
+        tp_idx: int,
+        rx: list[int],
+        ry: list[int],
+        rz: list[int],
+        theme: str,
+        opacity: float,
+        history: list[dict] | None,
+    ):
+        if tab_val != "tab-3d":
             raise PreventUpdate
         dark = theme == "dark"
+        op_val = float(opacity if opacity is not None else 0.95)
+
+        if vol_src in ("xray_full", "xray_roi"):
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
+            tp = ds.timepoints[idx]
+            if vol_src == "xray_roi":
+                v_dict = load_chunked_volume(
+                    str(tp.path),
+                    z_range=(int(rz[0]), int(rz[1])),
+                    y_range=(int(ry[0]), int(ry[1])),
+                    x_range=(int(rx[0]), int(rx[1])),
+                    z_step=1,
+                    xy_step=1,
+                )
+                circ = None
+                mode_tag = "1x1x1 selected region"
+            else:
+                nz_tot, ny_tot, nx_tot = stack_dimensions(str(tp.path))
+                z_st = 2 if nz_tot <= 96 else 4
+                xy_st = 4 if nx_tot <= 256 else 16
+                v_dict = load_chunked_volume(str(tp.path), z_step=z_st, xy_step=xy_st)
+                circ = fit_reference_circle(str(ds.timepoints[0].path))
+                mode_tag = f"pooled ({xy_st}x XY, {z_st}x Z)"
+
+            xmin, xmax = float(v_dict["x"].min()), float(v_dict["x"].max())
+            ymin, ymax = float(v_dict["y"].min()), float(v_dict["y"].max())
+            zmin, zmax = float(v_dict["z"].min()), float(v_dict["z"].max())
+            cbox = (
+                (xmin + (xmax - xmin) * clip_x[0] / 100.0, xmin + (xmax - xmin) * clip_x[1] / 100.0),
+                (ymin + (ymax - ymin) * clip_y[0] / 100.0, ymin + (ymax - ymin) * clip_y[1] / 100.0),
+                (zmin + (zmax - zmin) * clip_z[0] / 100.0, zmin + (zmax - zmin) * clip_z[1] / 100.0),
+            )
+            fig3d = build_chunked_mesh3d_figure(
+                v_dict,
+                dark_mode=dark,
+                threshold=float(thr or 128.0),
+                opacity=op_val,
+                rim_cutoff=float(rim_cut or 1.0),
+                circle=circ,
+                clip_box=cbox,
+                height=540,
+            )
+            fighist = build_slice_histogram_figure(v_dict["hist"], v_dict["edges"], dark_mode=dark)
+            shp = v_dict["shape"]
+            return (
+                fig3d,
+                fighist,
+                f"{ds.label} · {tp.label} ({mode_tag})",
+                f"Mesh grid {shp[2]} x {shp[1]} x {shp[0]} ({v_dict['load_ms']:.0f} ms)",
+            )
+
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
-            return empty_placeholder_figure(dark_mode=dark, height=540)
-        flags = set(opts or [])
-        return build_3d_isosurface_figure(
-            run,
-            clip_pct_zyx=(
-                (float(clip_z[0]), float(clip_z[1])),
-                (0.0, 100.0),
-                (float(clip_x[0]), float(clip_x[1])),
-            ),
-            opacity=float(opacity or 0.9),
-            show_coating=("coating" in flags),
-            show_roi_box=("roi" in flags),
-            dark_mode=dark,
+            raise PreventUpdate
+        fig3d = build_3d_isosurface_figure(run, height=540, dark_mode=dark)
+        if fig3d.data:
+            fig3d.data[0].opacity = op_val
+        arr = np.asarray(run.flux_field if run.flux_field is not None else run.phase_volume.data)
+        hist, edges = np.histogram(arr[np.isfinite(arr)], bins=32)
+        fighist = build_slice_histogram_figure(hist, edges, dark_mode=dark)
+        nz, ny, nx = run.phase_volume.shape
+        return (
+            fig3d,
+            fighist,
+            f"{run.summary.label} · solid architecture & bottleneck box",
+            f"{nx} x {ny} x {nz} px",
         )
 
+    # ── 13. Compare View (Linked Z Sliders + X-ray Timepoints OR Simulated Runs) ──
     @app.callback(
-        Output("morphology-kpi-strip", "children"),
-        Output("morphology-graph", "figure"),
-        Input("main-tabs", "value"),
-        Input("active-run-id-store", "data"),
-        Input("theme-store", "data"),
-        State("run-history-store", "data"),
+        Output("cmp-left-select", "options"),
+        Output("cmp-left-select", "value"),
+        Output("cmp-right-select", "options"),
+        Output("cmp-right-select", "value"),
+        Output("cmp-left-z", "max"),
+        Output("cmp-right-z", "max"),
+        Input("cmp-mode-radio", "value"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("run-history-store", "data"),
     )
-    def render_morphology_tab(
-        active_tab: str,
-        run_id: str | None,
-        theme: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[list[Any], Any]:
-        if active_tab != "tab-morph":
-            raise PreventUpdate
-        dark = theme == "dark"
-        run = registry.get_or_rehydrate(run_id, history)
-        if run is None or not run.summary.morphology:
-            return [], empty_placeholder_figure(dark_mode=dark, height=480)
-        m = run.summary.morphology
-        kpis = [
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Percolating Pore Fraction", className="kpi-label"),
-                    html.Div(f"{m['percolating_fraction']*100:.1f}%", className="kpi-value"),
-                    html.Div(f"{m['num_percolating_clusters']} spanning cluster(s)", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Dead-End Pore Fraction", className="kpi-label"),
-                    html.Div(f"{m['dead_end_fraction']*100:.1f}%", className="kpi-value"),
-                    html.Div(f"{m['num_dead_end_clusters']} single-face pocket(s)", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Trapped / Isolated Pores", className="kpi-label"),
-                    html.Div(f"{m['trapped_fraction']*100:.1f}%", className="kpi-value"),
-                    html.Div(f"{m['num_trapped_clusters']} disconnected cavity/ies", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Median Pore Diameter D50", className="kpi-label"),
-                    html.Div(f"{m['d50_um']:.2f} µm", className="kpi-value"),
-                    html.Div(f"D10={m['d10_um']:.1f} · D90={m['d90_um']:.1f} µm", className="kpi-sub"),
-                ],
-            ),
+    def _sync_compare_dropdowns(
+        cmp_mode: str,
+        ds_key: str,
+        history: list[dict] | None,
+    ):
+        if cmp_mode == "xray":
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            opts = [{"label": tp.label, "value": str(i)} for i, tp in enumerate(ds.timepoints)]
+            nz, _, _ = stack_dimensions(str(ds.timepoints[0].path))
+            v_left = "0"
+            v_right = "1" if len(opts) > 1 else "0"
+            return opts, v_left, opts, v_right, max(0, nz - 1), max(0, nz - 1)
+
+        items = list(history or [])
+        opts = [
+            {
+                "label": f"{h.get('label', h['run_id'])} (ε={float(h['porosity']) * 100:.0f}%)",
+                "value": str(h["run_id"]),
+            }
+            for h in items
         ]
-        return kpis, build_morphology_figure(run, dark_mode=dark)
+        if not opts:
+            return [], None, [], None, 47, 47
+        v_left = opts[0]["value"]
+        v_right = opts[-1]["value"]
+        r_left = registry.get_or_rehydrate(v_left, items)
+        r_right = registry.get_or_rehydrate(v_right, items)
+        m_l = plane_slider_bounds_for_run(r_left, "xz")[0] if r_left else 47
+        m_r = plane_slider_bounds_for_run(r_right, "xz")[0] if r_right else 47
+        return opts, v_left, opts, v_right, m_l, m_r
 
     @app.callback(
-        Output("electrochem-kpi-strip", "children"),
-        Output("mechanics-status-strip", "children"),
-        Output("electrochem-graph", "figure"),
-        Input("main-tabs", "value"),
-        Input("active-run-id-store", "data"),
-        Input("chemistry-preset-dropdown", "value"),
+        Output("cmp-left-z", "value"),
+        Output("cmp-right-z", "value"),
+        Input("cmp-left-z", "value"),
+        Input("cmp-right-z", "value"),
+        State("cmp-link-z-toggle", "value"),
+        prevent_initial_call=True,
+    )
+    def _sync_linked_compare_z(zl: int, zr: int, link_vals: list[str] | None):
+        if not link_vals or "link" not in link_vals:
+            raise PreventUpdate
+        if ctx.triggered_id == "cmp-left-z" and zl != zr:
+            return zl, zl
+        if ctx.triggered_id == "cmp-right-z" and zr != zl:
+            return zr, zr
+        raise PreventUpdate
+
+    @app.callback(
+        Output("cmp-left-img", "src"),
+        Output("cmp-left-caption", "children"),
+        Output("cmp-left-hist", "figure"),
+        Output("cmp-right-img", "src"),
+        Output("cmp-right-caption", "children"),
+        Output("cmp-right-hist", "figure"),
+        Output("cmp-delta-summary", "children"),
+        Input("main-view-tabs", "value"),
+        Input("cmp-mode-radio", "value"),
+        Input("cmp-left-select", "value"),
+        Input("cmp-right-select", "value"),
+        Input("cmp-left-z", "value"),
+        Input("cmp-right-z", "value"),
+        Input("operando-dataset-dropdown", "value"),
+        Input("operando-cmap-dropdown", "value"),
         Input("theme-store", "data"),
         State("run-history-store", "data"),
     )
-    def render_electrochem_and_mechanics_tab(
-        active_tab: str,
+    def _render_compare_view(
+        tab_val: str,
+        cmp_mode: str,
+        left_sel: str | None,
+        right_sel: str | None,
+        zl: int,
+        zr: int,
+        ds_key: str,
+        cmap: str,
+        theme: str,
+        history: list[dict] | None,
+    ):
+        if tab_val != "tab-compare":
+            raise PreventUpdate
+        dark = theme == "dark"
+
+        if cmp_mode == "xray":
+            datasets = discover_operando_datasets()
+            ds = datasets.get(ds_key) or next(iter(datasets.values()))
+            i_l = int(np.clip(int(left_sel or 0), 0, len(ds.timepoints) - 1))
+            i_r = int(np.clip(int(right_sel or 0), 0, len(ds.timepoints) - 1))
+            tp_l, tp_r = ds.timepoints[i_l], ds.timepoints[i_r]
+            shared_rng = dataset_intensity_range(tuple(str(t.path) for t in ds.timepoints))
+            sl = load_lazy_slice(str(tp_l.path), int(zl or 0), hist_range=shared_rng, cmap=cmap or "grayscale")
+            sr = load_lazy_slice(str(tp_r.path), int(zr or 0), hist_range=shared_rng, cmap=cmap or "grayscale")
+            hl = build_slice_histogram_figure(sl["hist"], sl["edges"], dark_mode=dark, x_range=shared_rng)
+            hr = build_slice_histogram_figure(sr["hist"], sr["edges"], dark_mode=dark, x_range=shared_rng)
+            m_struct = dataset_structural_metrics(tuple(str(t.path) for t in ds.timepoints))
+            v_l = m_struct["low_atten_fraction"][i_l] * 100.0
+            v_r = m_struct["low_atten_fraction"][i_r] * 100.0
+            delta_txt = (
+                f"Active-layer void + plated Li fraction: {tp_l.label} = {v_l:.2f}% vs "
+                f"{tp_r.label} = {v_r:.2f}% (change: {v_r - v_l:+.2f} percentage points)."
+            )
+            return (
+                sl["png_src"],
+                f"{tp_l.label} · slice {int(zl or 0)} ({sl['read_ms']:.1f} ms)",
+                hl,
+                sr["png_src"],
+                f"{tp_r.label} · slice {int(zr or 0)} ({sr['read_ms']:.1f} ms)",
+                hr,
+                html.Div(delta_txt, className="helper-copy"),
+            )
+
+        items = list(history or [])
+        rl = registry.get_or_rehydrate(left_sel, items)
+        rr = registry.get_or_rehydrate(right_sel, items)
+        if rl is None or rr is None:
+            raise PreventUpdate
+        src_l, cap_l = render_run_slice_png(rl, plane="xz", slice_index=int(zl or 0), layer="flux")
+        src_r, cap_r = render_run_slice_png(rr, plane="xz", slice_index=int(zr or 0), layer="flux")
+        fl = np.asarray(rl.flux_field if rl.flux_field is not None else rl.phase_volume.data)
+        fr = np.asarray(rr.flux_field if rr.flux_field is not None else rr.phase_volume.data)
+        hl_arr, el_arr = np.histogram(fl[np.isfinite(fl)], bins=32)
+        hr_arr, er_arr = np.histogram(fr[np.isfinite(fr)], bins=32)
+        hl = build_slice_histogram_figure(hl_arr, el_arr, dark_mode=dark)
+        hr = build_slice_histogram_figure(hr_arr, er_arr, dark_mode=dark)
+        tl = rl.summary.directional.get("z")
+        tr = rr.summary.directional.get("z")
+        tau_l = tl.tortuosity if tl and tl.tortuosity else 0.0
+        tau_r = tr.tortuosity if tr and tr.tortuosity else 0.0
+        delta_table = html.Table(
+            className="results-table",
+            children=[
+                html.Tbody(
+                    [
+                        _result_row(
+                            "Open pore space comparison",
+                            f"{rl.summary.label} vs {rr.summary.label}",
+                            f"{rl.summary.porosity * 100:.1f}% -> {rr.summary.porosity * 100:.1f}%",
+                        ),
+                        _result_row(
+                            "Pathway tortuosity comparison",
+                            "Through-plane detour factor",
+                            f"{tau_l:.3f} -> {tau_r:.3f}",
+                        ),
+                    ]
+                )
+            ],
+        )
+        return src_l, cap_l, hl, src_r, cap_r, hr, delta_table
+
+    # ── 14. Discharge & Pores View ──
+    @app.callback(
+        Output("electrochem-graph", "figure"),
+        Output("morphology-graph", "figure"),
+        Output("directional-profile-graph", "figure"),
+        Input("main-view-tabs", "value"),
+        Input("active-run-id-store", "data"),
+        Input("chemistry-dropdown", "value"),
+        Input("theme-store", "data"),
+        State("run-history-store", "data"),
+    )
+    def _render_pores_and_electrochem(
+        tab_val: str,
         run_id: str | None,
-        chemistry_key: str | None,
-        theme: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> tuple[list[Any], Any, Any]:
-        if active_tab != "tab-echem":
+        chem_key: str,
+        theme: str,
+        history: list[dict] | None,
+    ):
+        if tab_val != "tab-pores":
             raise PreventUpdate
         dark = theme == "dark"
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
-            return [], html.Div(), empty_placeholder_figure(dark_mode=dark, height=470)
-
+            raise PreventUpdate
         s = run.summary
         tz = s.directional.get("z")
         d_eff_z = tz.effective_diffusivity if tz else s.porosity
-        l_m = float(s.shape_zyx[0]) * float(s.voxel_size_um_zyx[0]) * 1e-6
-        echem_rep = evaluate_cell_electrochemistry(
+        thick_m = float(s.shape_zyx[0]) * float(s.voxel_size_um_zyx[0]) * 1.0e-6
+        ec_rep = evaluate_cell_electrochemistry(
             porosity=s.porosity,
             d_eff_z=d_eff_z,
-            specific_surface_area_m_inv=(
-                s.interfacial_area_active_m_inv
-                if s.interfacial_area_active_m_inv > 0
-                else 8.0e4
-            ),
-            solid_sigma_eff_z=(
-                s.solid_effective_conductivity_z
-                if s.solid_effective_conductivity_z > 0
-                else 0.05
-            ),
-            thickness_m=l_m,
-            chemistry_key=str(chemistry_key or "nmc811_li_ion"),
+            specific_surface_area_m_inv=max(s.interfacial_area_active_m_inv, 2.0e4),
+            solid_sigma_eff_z=max(s.solid_effective_conductivity_z, 0.02),
+            thickness_m=thick_m,
+            chemistry_key=chem_key or "nmc811_li_ion",
         )
-        ed = echem_rep.to_dict()
-        c_1c = next((c for c in ed["curves"] if abs(c["c_rate"] - 1.0) < 0.1), ed["curves"][0])
-        c_4c = ed["curves"][-1]
-
-        mech = s.mechanics
-        if mech and mech.get("backend") == "sms-fortran":
-            mech_card_val = f"{mech['effective_modulus_gpa']:.3f} GPa"
-            mech_card_sub = (
-                f"E/E₀={mech['relative_stiffness']:.3f} · Peak σ_vM={mech['peak_von_mises_mpa']:.2f} MPa "
-                f"({mech['peak_stress_concentration']:.1f}×)"
-            )
-            mech_banner = html.Div(
-                [
-                    html.Span("SMS Fortran 3D Elasticity", className="pill pill-origin"),
-                    html.Span(
-                        f"Solved on {mech['solve_grid_zyx'][2]}×{mech['solve_grid_zyx'][1]}×{mech['solve_grid_zyx'][0]} "
-                        f"({mech['iterations']} iters) — inspect σ_vM field in Tab 1.",
-                    ),
-                ]
-            )
-        else:
-            mech_card_val = "On-Demand"
-            mech_card_sub = "Check 'Compute 3D SMS Mechanics' in Step 2"
-            mech_banner = html.Div(
-                "Tip: Enable 'Compute 3D SMS Mechanics (E_eff & σ_vM)' in Step 2 to run coupled Fortran 3D linear elasticity.",
-                style={"color": "var(--text-muted)"},
-            )
-
-        kpis = [
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Limiting Current J_lim", className="kpi-label"),
-                    html.Div(f"{ed['limiting_current_ma_cm2']:.1f} mA/cm²", className="kpi-value"),
-                    html.Div(f"Critical rate C_lim = {ed['limiting_c_rate']:.2f}C", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("1C Accessible Capacity", className="kpi-label"),
-                    html.Div(f"{c_1c['accessible_capacity_pct']:.1f}%", className="kpi-value"),
-                    html.Div(f"Energy efficiency {c_1c['specific_energy_pct']:.1f}%", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div(f"{c_4c['c_rate']}C Fast-Charge Capacity", className="kpi-label"),
-                    html.Div(f"{c_4c['accessible_capacity_pct']:.1f}%", className="kpi-value"),
-                    html.Div(f"Salt-depletion η_conc = {c_4c['eta_concentration_mv']:.0f} mV", className="kpi-sub"),
-                ],
-            ),
-            html.Div(
-                className="kpi-card",
-                children=[
-                    html.Div("Axial Stiffness E_eff (SMS)", className="kpi-label"),
-                    html.Div(mech_card_val, className="kpi-value"),
-                    html.Div(mech_card_sub, className="kpi-sub"),
-                ],
-            ),
-        ]
-        return kpis, mech_banner, build_electrochem_figure(ed, dark_mode=dark)
-
-    @app.callback(
-        Output("compare-left-dropdown", "options"),
-        Output("compare-right-dropdown", "options"),
-        Output("compare-left-graph", "figure"),
-        Output("compare-right-graph", "figure"),
-        Output("compare-delta-table", "children"),
-        Input("main-tabs", "value"),
-        Input("run-history-store", "data"),
-        Input("compare-left-dropdown", "value"),
-        Input("compare-right-dropdown", "value"),
-        Input("compare-layer-radio", "value"),
-        Input("theme-store", "data"),
-    )
-    def render_compare_tab(
-        active_tab: str,
-        history: list[dict[str, Any]] | None,
-        left_id: str | None,
-        right_id: str | None,
-        layer: str,
-        theme: str | None,
-    ) -> tuple[Any, ...]:
-        opts = [
-            {"label": f"{h['label']} (R={h['r_cell']:.2f})", "value": h["run_id"]}
-            for h in (history or [])
-        ]
-        if active_tab != "tab-compare":
-            return opts, opts, no_update, no_update, no_update
-
-        dark = theme == "dark"
-        r_left = registry.get_or_rehydrate(left_id, history) or (
-            registry.get_or_rehydrate(opts[0]["value"], history) if opts else None
+        fig_ec = build_electrochem_figure(ec_rep.to_dict(), dark_mode=dark)
+        fig_mo = (
+            build_morphology_figure(s.morphology, dark_mode=dark)
+            if s.morphology
+            else empty_placeholder_figure("No pore statistics", dark_mode=dark)
         )
-        r_right = registry.get_or_rehydrate(right_id, history) or (
-            registry.get_or_rehydrate(opts[-1]["value"], history) if opts else None
-        )
-        if r_left is None or r_right is None:
-            emp = empty_placeholder_figure(dark_mode=dark)
-            return opts, opts, emp, emp, html.Div()
+        fig_dir = build_directional_and_profile_figure(run, dark_mode=dark)
+        return fig_ec, fig_mo, fig_dir
 
-        shared_zmax: float | None = None
-        if layer == "flux" and r_left.flux_field is not None and r_right.flux_field is not None:
-            shared_zmax = max(
-                float(np.percentile(r_left.flux_field, 99.2)),
-                float(np.percentile(r_right.flux_field, 99.2)),
-                1.25,
-            )
-
-        fig_l = build_slice_figure(
-            r_left,
-            plane="xz",
-            slice_index=r_left.phase_volume.shape[1] // 2,
-            layer=layer,  # type: ignore[arg-type]
-            zmax_override=shared_zmax,
-            height=410,
-            dark_mode=dark,
-        )
-        fig_r = build_slice_figure(
-            r_right,
-            plane="xz",
-            slice_index=r_right.phase_volume.shape[1] // 2,
-            layer=layer,  # type: ignore[arg-type]
-            zmax_override=shared_zmax,
-            height=410,
-            dark_mode=dark,
-        )
-
-        sl, sr = r_left.summary, r_right.summary
-        tz_l = sl.directional["z"].tortuosity if "z" in sl.directional else None
-        tz_r = sr.directional["z"].tortuosity if "z" in sr.directional else None
-        cl_l = (sl.electrochem or {}).get("limiting_c_rate")
-        cl_r = (sr.electrochem or {}).get("limiting_c_rate")
-        delta_tbl = html.Table(
-            className="roi-table",
-            children=[
-                html.Thead(
-                    html.Tr(
-                        [
-                            html.Th("Metric"),
-                            html.Th(f"Left: {sl.label}"),
-                            html.Th(f"Right: {sr.label}"),
-                            html.Th("Delta (Right − Left)"),
-                        ]
-                    )
-                ),
-                html.Tbody(
-                    [
-                        html.Tr(
-                            [
-                                html.Td("Porosity ε"),
-                                html.Td(f"{sl.porosity:.4f}"),
-                                html.Td(f"{sr.porosity:.4f}"),
-                                html.Td(f"{sr.porosity - sl.porosity:+.4f}"),
-                            ]
-                        ),
-                        html.Tr(
-                            [
-                                html.Td("Through-Plane τ_Z"),
-                                html.Td(f"{tz_l:.3f}" if tz_l else "N/A"),
-                                html.Td(f"{tz_r:.3f}" if tz_r else "N/A"),
-                                html.Td(f"{tz_r - tz_l:+.3f}" if (tz_l and tz_r) else "—"),
-                            ]
-                        ),
-                        html.Tr(
-                            [
-                                html.Td("Limiting C-Rate C_lim"),
-                                html.Td(f"{cl_l:.2f}C" if cl_l is not None else "—"),
-                                html.Td(f"{cl_r:.2f}C" if cl_r is not None else "—"),
-                                html.Td(
-                                    f"{cl_r - cl_l:+.2f}C"
-                                    if (cl_l is not None and cl_r is not None)
-                                    else "—"
-                                ),
-                            ]
-                        ),
-                        html.Tr(
-                            [
-                                html.Td("Cell Resistance R_cell"),
-                                html.Td(f"{sl.cell_resistance_fom:.3f}"),
-                                html.Td(f"{sr.cell_resistance_fom:.3f}"),
-                                html.Td(f"{sr.cell_resistance_fom - sl.cell_resistance_fom:+.3f}"),
-                            ]
-                        ),
-                    ]
-                ),
-            ],
-        )
-        return opts, opts, fig_l, fig_r, delta_tbl
-
+    # ── 15. Plan Scans View (Bayesian GP Steering) ──
     @app.callback(
         Output("gp-steering-graph", "figure"),
-        Output("twin-recommendation-banner", "children"),
+        Output("gp-recommendation-banner", "children"),
         Output("suggested-kpa-store", "data"),
-        Output("zoom-roi-cards", "children"),
-        Output("sweep-history-table", "children"),
-        Input("active-run-id-store", "data"),
+        Input("main-view-tabs", "value"),
         Input("run-history-store", "data"),
-        Input("twin-w-ion-slider", "value"),
-        Input("twin-w-elec-slider", "value"),
-        Input("twin-w-kin-slider", "value"),
-        Input("twin-sigma-kappa-slider", "value"),
+        Input("gp-w-ion", "value"),
+        Input("gp-w-elec", "value"),
+        Input("gp-w-kin", "value"),
         Input("theme-store", "data"),
     )
-    def render_digital_twin_tab(
-        run_id: str | None,
-        history: list[dict[str, Any]] | None,
-        w_ion: float | None,
-        w_elec: float | None,
-        w_kin: float | None,
-        sigma_kappa: float | None,
-        theme: str | None,
-    ) -> tuple[Any, ...]:
+    def _render_gp_planner(
+        tab_val: str,
+        history: list[dict] | None,
+        w_ion: float,
+        w_elec: float,
+        w_kin: float,
+        theme: str,
+    ):
         dark = theme == "dark"
-        run = registry.get_or_rehydrate(run_id, history)
-        active_kind = run.summary.source_kind if run else None
-
-        wi = float(w_ion if w_ion is not None else 0.58)
-        we = float(w_elec if w_elec is not None else 0.27)
-        wk = float(w_kin if w_kin is not None else 0.15)
-        sk = float(sigma_kappa if sigma_kappa is not None else 16.0)
-
         sug = compute_gp_for_campaign(
             history or [],
-            active_source_kind=active_kind,
-            w_ion=wi,
-            w_elec=we,
-            w_kin=wk,
-            sigma_over_kappa_bulk=sk,
+            active_source_kind="carbon_felt",
+            w_ion=float(w_ion or 0.58),
+            w_elec=float(w_elec or 0.27),
+            w_kin=float(w_kin or 0.15),
         )
-
-        if sug is not None:
-            gp_fig = build_gp_steering_figure(sug, dark_mode=dark)
-            rec_banner = html.Div(
-                children=[
-                    html.Span("Bayesian Active Planner", className="pill pill-origin"),
-                    html.Strong(
-                        f"Next Recommended Setpoint: {sug.suggested_value:.2f} {sug.parameter_unit}".strip(),
-                        style={"fontSize": "14.5px"},
-                    ),
-                    html.Div(
-                        sug.rationale,
-                        style={
-                            "fontSize": "12px",
-                            "color": "var(--text-secondary)",
-                            "marginTop": "3px",
-                        },
-                    ),
-                ]
-            )
-            next_kpa = sug.suggested_value if sug.parameter_unit == "kPa" else 200.0
-        else:
-            gp_fig = empty_placeholder_figure(
-                "Click '⚡ Run 5-Point Campaign Sweep' or evaluate 2+ states to fit the GP surrogate.",
-                dark_mode=dark,
-            )
-            rec_banner = html.Div(
-                "Evaluate at least two distinct compression or porosity states to activate GP steering."
-            )
-            next_kpa = 200.0
-
-        roi_rows = []
-        if run and run.summary.zoom_rois:
-            for r in run.summary.zoom_rois:
-                cz, cy, cx = r.center_um_zyx
-                roi_rows.append(
-                    html.Tr(
-                        [
-                            html.Td(f"#{r.rank}"),
-                            html.Td(f"({cx:.1f}, {cy:.1f}, {cz:.1f}) µm"),
-                            html.Td(f"{r.peak_flux_magnitude:.2f}×"),
-                            html.Td(f"{r.local_porosity:.2f} ({r.constriction_index:.2f}×)"),
-                        ]
-                    )
-                )
-        roi_block = (
-            html.Table(
-                className="roi-table",
-                children=[
-                    html.Thead(
-                        html.Tr(
-                            [
-                                html.Th("ROI"),
-                                html.Th("Centre (x, y, z)"),
-                                html.Th("Peak |J/J0|"),
-                                html.Th("Local ε (Constr.)"),
-                            ]
-                        )
-                    ),
-                    html.Tbody(roi_rows),
-                ],
-            )
-            if roi_rows
-            else html.Div(
-                "Uniform domain — no localised bottleneck throats.",
-                style={"fontSize": "12.5px"},
-            )
-        )
-
-        hist_rows = []
-        for h in history or []:
-            live_r = _recompute_entry_r_cell(
-                h, w_ion=wi, w_elec=we, w_kin=wk, sigma_over_kappa_bulk=sk
-            )
-            if h.get("source_kind") in ("carbon_felt", "porousdiff_gallery"):
-                param_str = f"{h['clamping_kpa']:.0f} kPa"
-            elif float(h.get("virtual_compression_strain", 0.0)) > 0:
-                param_str = f"ε_z={float(h['virtual_compression_strain']):.0%}"
-            else:
-                param_str = f"ε={h['porosity']:.2f}"
-            hist_rows.append(
-                html.Tr(
-                    [
-                        html.Td(h["label"]),
-                        html.Td(param_str),
-                        html.Td(f"{h['porosity']:.3f}"),
-                        html.Td(f"{h['tau_z']:.3f}" if h.get("tau_z") else "—"),
-                        html.Td(html.B(f"{live_r:.3f}")),
-                    ]
-                )
-            )
-        hist_tbl = html.Table(
-            className="roi-table",
-            children=[
-                html.Thead(
-                    html.Tr(
-                        [
-                            html.Th("Run"),
-                            html.Th("Setpoint"),
-                            html.Th("ε"),
-                            html.Th("τ_Z"),
-                            html.Th("R_cell (Live)"),
-                        ]
-                    )
+        if sug is None:
+            return (
+                empty_placeholder_figure(
+                    "Run at least two compression loads to fit the optimiser",
+                    dark_mode=dark,
                 ),
-                html.Tbody(hist_rows),
-            ],
+                "Run at least two compression loads to get a suggested next test.",
+                200.0,
+            )
+        fig = build_gp_steering_figure(sug, dark_mode=dark)
+        banner = html.Div(
+            [
+                html.Strong(
+                    f"Suggested next load: {sug.suggested_value:.0f} {sug.parameter_unit}"
+                ),
+                html.Span(
+                    f" · Current best tested: {sug.current_best_parameter:.0f} {sug.parameter_unit} "
+                    f"(resistance score {sug.current_best_r_cell:.3f}, {len(sug.observed_x)} loads tested)."
+                ),
+            ]
         )
-        return gp_fig, rec_banner, next_kpa, roi_block, hist_tbl
+        return fig, banner, float(sug.suggested_value)
 
+    # ── 16. Guide View (Plain-English Interactive Exercises, Zero Emojis) ──
+    @app.callback(
+        Output("guide-cards-container", "children"),
+        Input("run-history-store", "data"),
+    )
+    def _render_guide_cards(history: list[dict] | None):
+        steps = evaluate_teaching_lab_progress(history)
+        done_count = sum(1 for st in steps if st["passed"])
+        cards = []
+        for st in steps:
+            tag_cls = "status-tag status-tag--done" if st["passed"] else "status-tag"
+            tag_txt = "DONE" if st["passed"] else "TO TRY"
+            cards.append(
+                html.Div(
+                    className="guide-card",
+                    children=[
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "justifyContent": "space-between",
+                                "alignItems": "center",
+                                "marginBottom": "6px",
+                            },
+                            children=[
+                                html.Strong(f"{st['step']} · {st['title']}"),
+                                html.Span(tag_txt, className=tag_cls),
+                            ],
+                        ),
+                        html.Div(st["description"], className="helper-copy"),
+                    ],
+                )
+            )
+        header = html.Div(
+            f"Completed {done_count} of {len(steps)} exercises in this session.",
+            className="mono",
+            style={"gridColumn": "1 / -1", "fontWeight": "600"},
+        )
+        return [header, *cards]
+
+    # ── 17. Downloads: Report Bundle (.zip), BPX (.json), Campaign (.json), 3D Volume (.ome.zarr.zip) ──
     @app.callback(
         Output("download-bundle", "data"),
         Input("export-bundle-btn", "n_clicks"),
         State("active-run-id-store", "data"),
         State("run-history-store", "data"),
-        State("twin-w-ion-slider", "value"),
-        State("twin-w-elec-slider", "value"),
-        State("twin-w-kin-slider", "value"),
-        State("twin-sigma-kappa-slider", "value"),
         prevent_initial_call=True,
     )
-    def download_nia_bundle(
-        n_clicks: int,
-        run_id: str | None,
-        history: list[dict[str, Any]] | None,
-        w_ion: float | None,
-        w_elec: float | None,
-        w_kin: float | None,
-        sigma_kappa: float | None,
-    ) -> Any:
+    def _download_bundle(n_clicks: int, run_id: str | None, history: list[dict] | None):
         if not n_clicks:
             raise PreventUpdate
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             raise PreventUpdate
-        sug = compute_gp_for_campaign(
-            history or [],
-            active_source_kind=run.summary.source_kind,
-            w_ion=float(w_ion if w_ion is not None else 0.58),
-            w_elec=float(w_elec if w_elec is not None else 0.27),
-            w_kin=float(w_kin if w_kin is not None else 0.15),
-            sigma_over_kappa_bulk=float(sigma_kappa if sigma_kappa is not None else 16.0),
-        )
-        payload = build_report_bundle_bytes(run, bayesian_suggestion=sug, include_ome_zarr=True)
-        fname = f"openimpala_hub_bundle_{run.summary.run_id}.zip"
-        return dcc.send_bytes(payload, filename=fname)
+        raw = build_report_bundle_bytes(run, include_ome_zarr=True)
+        return dcc.send_bytes(raw, f"openimpala_hub_{run.summary.run_id}.zip")
 
     @app.callback(
         Output("download-bpx", "data"),
@@ -1743,31 +1673,56 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         State("run-history-store", "data"),
         prevent_initial_call=True,
     )
-    def download_bpx_json(
-        n_clicks: int,
-        run_id: str | None,
-        history: list[dict[str, Any]] | None,
-    ) -> Any:
+    def _download_bpx(n_clicks: int, run_id: str | None, history: list[dict] | None):
         if not n_clicks:
             raise PreventUpdate
         run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             raise PreventUpdate
-        content = json.dumps(run.summary.bpx_parameters, indent=2)
-        fname = f"openimpala_bpx_{run.summary.run_id}.json"
-        return dcc.send_string(content, filename=fname)
+        raw_str = json.dumps(run.summary.bpx_parameters, indent=2)
+        return dict(
+            content=raw_str,
+            filename=f"bpx_parameters_{run.summary.run_id}.json",
+            type="application/json",
+        )
 
     @app.callback(
         Output("download-campaign", "data"),
-        Input("export-campaign-btn", "n_clicks"),
+        Input("save-campaign-btn", "n_clicks"),
         State("run-history-store", "data"),
         prevent_initial_call=True,
     )
-    def download_campaign_json(
-        n_clicks: int,
-        history: list[dict[str, Any]] | None,
-    ) -> Any:
-        if not n_clicks or not history:
+    def _download_campaign(n_clicks: int, history: list[dict] | None):
+        if not n_clicks:
             raise PreventUpdate
-        content = serialize_campaign_json(history)
-        return dcc.send_string(content, filename="openimpala_hub_campaign.json")
+        return dict(
+            content=serialize_campaign_json(history or []),
+            filename="openimpala_campaign.json",
+            type="application/json",
+        )
+
+    @app.callback(
+        Output("download-volume", "data"),
+        Input("save-volume-btn", "n_clicks"),
+        State("active-run-id-store", "data"),
+        State("run-history-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _download_volume_ome_zarr(n_clicks: int, run_id: str | None, history: list[dict] | None):
+        if not n_clicks:
+            raise PreventUpdate
+        run = registry.get_or_rehydrate(run_id, history)
+        if run is None:
+            raise PreventUpdate
+        with tempfile.TemporaryDirectory() as tmpd:
+            zarr_dir = Path(tmpd) / f"sample_{run.summary.run_id}.ome.zarr"
+            write_ome_zarr(run.phase_volume, zarr_dir, multiscale_levels=2, overwrite=True)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for fp in sorted(zarr_dir.rglob("*")):
+                    if fp.is_file():
+                        arc = f"{zarr_dir.name}/{fp.relative_to(zarr_dir).as_posix()}"
+                        zf.write(fp, arcname=arc)
+            return dcc.send_bytes(
+                buf.getvalue(), f"sample_{run.summary.run_id}.ome.zarr.zip"
+            )

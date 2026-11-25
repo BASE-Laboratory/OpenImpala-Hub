@@ -228,10 +228,18 @@ def find_flux_bottleneck_rois(
     # Require at least 5% conducting voxels in the window so pure solid blocks are ignored
     valid = pore_sum >= max(4.0, 0.05 * win_vol)
     mean_pore_flux = np.divide(
-        flux_sum, pore_sum, out=np.zeros_like(flux_sum), where=pore_sum > 0.0
+        flux_sum, pore_sum, out=np.zeros_like(flux_sum), where=pore_sum > 1e-6
     )
     rms_pore_flux = np.sqrt(
-        np.divide(flux_sq_sum, pore_sum, out=np.zeros_like(flux_sq_sum), where=pore_sum > 0.0)
+        np.maximum(
+            0.0,
+            np.divide(
+                flux_sq_sum,
+                pore_sum,
+                out=np.zeros_like(flux_sq_sum),
+                where=pore_sum > 1e-6,
+            ),
+        )
     )
     constriction = np.clip(global_porosity / np.maximum(local_porosity, 0.02), 0.5, 6.0)
     score = np.where(valid, rms_pore_flux * np.sqrt(constriction), -1.0)

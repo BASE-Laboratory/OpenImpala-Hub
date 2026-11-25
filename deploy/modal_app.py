@@ -37,6 +37,9 @@ def build_modal_objects() -> tuple[Any, Any, Any]:
             "scikit-image>=0.22",
             "matplotlib>=3.8",
             "pillow>=10.0",
+            "dask>=2024.2",
+            "pandas>=2.1",
+            "tifffile>=2023.7",
         )
         .run_commands(
             'GIT_TERMINAL_PROMPT=0 pip install --no-deps "sms @ git+https://github.com/BASE-Laboratory/structural_mechanics_solver.git" || true'
