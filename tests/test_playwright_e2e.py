@@ -46,7 +46,14 @@ def test_browser_v04_baselab_signature_porousdiff_xray_and_downloads(tmp_path: P
             context = browser.new_context(accept_downloads=True, viewport={"width": 1440, "height": 920})
             page = context.new_page()
             js_errors: list[str] = []
+            server_errors: list[str] = []
             page.on("pageerror", lambda err: js_errors.append(str(err)))
+            page.on(
+                "response",
+                lambda resp: server_errors.append(f"{resp.status} {resp.url}")
+                if resp.status >= 500
+                else None,
+            )
 
             page.goto(f"http://127.0.0.1:{port}/", wait_until="networkidle")
             page.wait_for_selector("#results-summary-table tr", timeout=15000)
@@ -100,12 +107,17 @@ def test_browser_v04_baselab_signature_porousdiff_xray_and_downloads(tmp_path: P
             # 5. Navigate across Compare, Discharge & Pores, Plan Scans, and Guide
             page.locator("#main-view-tabs").get_by_text("Compare").click()
             page.wait_for_function(
-                "() => (document.querySelector('#cmp-left-img')?.getAttribute('src') || '').startsWith('data:image/png;base64,')",
+                "() => (document.querySelector('#cmp-left-img')?.getAttribute('src') || '').startsWith('data:image/png;base64,') && (document.querySelector('#cmp-right-img')?.getAttribute('src') || '').startsWith('data:image/png;base64,')",
                 timeout=15000,
             )
+            assert page.locator("#cmp-left-z .rc-slider-mark-text").count() <= 5
 
             page.locator("#main-view-tabs").get_by_text("Discharge & Pores").click()
             page.wait_for_selector("#electrochem-graph .main-svg", state="visible", timeout=15000)
+            page.wait_for_function(
+                "() => document.querySelectorAll('#morphology-graph g.trace').length >= 3",
+                timeout=15000,
+            )
 
             page.locator("#main-view-tabs").get_by_text("Plan Scans").click()
             page.wait_for_selector("#gp-steering-graph .main-svg", state="visible", timeout=15000)
@@ -150,6 +162,7 @@ def test_browser_v04_baselab_signature_porousdiff_xray_and_downloads(tmp_path: P
                     "reproduce.py",
                 }.issubset(set(zf.namelist()))
 
+            assert server_errors == [], f"Unexpected HTTP 5xx callback errors: {server_errors}"
             assert js_errors == [], f"Unexpected browser JS errors: {js_errors}"
             context.close()
             browser.close()
@@ -186,6 +199,45 @@ def test_static_github_pages_ome_zarr_http_chunk_streaming() -> None:
                 "() => document.querySelector('#results-table')?.innerText.includes('Open pore space')",
                 timeout=10000,
             )
+
+            # Verify #slice-canvas rendered real non-black ion-current pixels on boot & realistic tortuosity
+            non_black = page.evaluate(
+                """() => {
+                    const c = document.getElementById('slice-canvas');
+                    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+                    let lit = 0;
+                    for (let i = 0; i < d.length; i += 16) {
+                        if (d[i] + d[i+1] + d[i+2] > 35) lit++;
+                    }
+                    return lit / (d.length / 16);
+                }"""
+            )
+            assert non_black > 0.35, f"Expected rendered boot slice canvas, got non_black={non_black:.3f}"
+
+            tau_val = page.evaluate(
+                """() => {
+                    const rows = Array.from(document.querySelectorAll('#results-table tr'));
+                    const r = rows.find(el => el.innerText.includes('Pathway tortuosity'));
+                    return parseFloat(r?.querySelector('.metric-val')?.innerText || '99');
+                }"""
+            )
+            assert 1.0 <= tau_val <= 2.6, f"Expected realistic carbon-felt tortuosity on boot, got {tau_val}"
+
+            # Verify 3D View renders sparse 3D fibres (not an all-black screen or solid ceiling block)
+            page.locator("#top-nav [data-tab='view3d']").click()
+            lit_3d = page.evaluate(
+                """() => {
+                    const c = document.getElementById('canvas-3d');
+                    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+                    let lit = 0;
+                    for (let i = 0; i < d.length; i += 16) {
+                        if (d[i] + d[i+1] + d[i+2] > 40) lit++;
+                    }
+                    return lit / (d.length / 16);
+                }"""
+            )
+            assert 0.03 <= lit_3d <= 0.65, f"Expected sparse 3D fibre projection, got lit_3d={lit_3d:.3f}"
+            page.locator("#top-nav [data-tab='slices']").click()
 
             # Switch to X-ray Scans -> triggers real HTTP fetch('./data/dls_i12_451kpa.ome.zarr/0/4/0/0')
             page.locator("#source-bar").get_by_text("X-ray Scans").click()

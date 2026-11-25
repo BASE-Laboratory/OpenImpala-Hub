@@ -572,8 +572,12 @@ html[data-theme="dark"] .hub-brand img {
 /* Compare & Guide grids */
 .compare-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
+}
+
+.compare-grid > div {
+  min-width: 0;
 }
 
 @media screen and (max-width: 900px) {

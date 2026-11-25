@@ -8,7 +8,7 @@ app_port: 7860
 license: bsd-3-clause
 ---
 
-# The OpenImpala Hub (`v0.4.1`)
+# The OpenImpala Hub (`v0.4.2`)
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Layer 4: Service](https://img.shields.io/badge/BASE_Lab-Layer_4_Service-0d9488)](AGENTS.md)
