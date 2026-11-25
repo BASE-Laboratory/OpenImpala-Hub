@@ -53,8 +53,9 @@ jobs:
             fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:7860/healthz | grep -q '"status": "ok"'
+          curl -fsS http://127.0.0.1:7860/healthz | jq -e '.status == "ok" and .solver_backend == "cpp-cpu"'
           curl -fsS -X POST http://127.0.0.1:7860/api/v1/solve \
             -H "Content-Type: application/json" \
-            -d '{"preset": "teaching_analytical_cube", "shape": [24, 24, 24]}' | grep -q '"porosity": 1.0'
+            -d '{"preset": "teaching_analytical_cube", "shape": [24, 24, 24]}' \
+            | jq -e '.porosity == 1 and .directional.z.tortuosity == 1'
           docker rm -f hub-smoke
