@@ -71,6 +71,7 @@ class MicrostructureSpec:
     threshold: float | str | None = None
     dark_is_pore: bool = True
     override_calibrated_spacing: bool = False
+    virtual_compression_strain: float = 0.0
     coarsen_policy: Literal["crop_center", "mode_downsample", "error"] = "crop_center"
     roi_zyx: tuple[tuple[int, int], tuple[int, int], tuple[int, int]] | None = None
     electrode_role: ElectrodeRole = "negative"
@@ -89,6 +90,11 @@ class MicrostructureSpec:
                 raise ValueError(f"voxel_size_um must be strictly positive, got {vz}.")
             object.__setattr__(self, "voxel_size_um", vz)
         object.__setattr__(self, "anisotropy_zyx", _normalize_3f(self.anisotropy_zyx))
+        object.__setattr__(
+            self,
+            "virtual_compression_strain",
+            min(max(float(self.virtual_compression_strain), 0.0), 0.65),
+        )
         role = str(self.electrode_role).strip().lower()
         if role not in ("negative", "positive", "separator"):
             raise ValueError(
@@ -109,7 +115,8 @@ class MicrostructureSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> MicrostructureSpec:
-        payload = dict(data)
+        allowed = set(cls.__dataclass_fields__.keys())
+        payload = {k: v for k, v in data.items() if k in allowed}
         if "shape" in payload:
             payload["shape"] = tuple(int(x) for x in payload["shape"])
         if payload.get("voxel_size_um") is not None:
@@ -125,7 +132,7 @@ class MicrostructureSpec:
 
 @dataclass(frozen=True)
 class SolveSpec:
-    """Configuration for an `OpenImpala` transport and stereology evaluation."""
+    """Configuration for an `OpenImpala` + `SMS` + electrochemistry evaluation."""
 
     conducting_phase: int = 0
     solid_phases: tuple[int, ...] = (1, 2)
@@ -135,6 +142,10 @@ class SolveSpec:
     compute_homogenisation: bool = False
     compute_solid_wiring: bool = True
     compute_rev_study: bool = False
+    compute_morphology: bool = True
+    compute_mechanics: bool = False
+    bulk_youngs_modulus_gpa: float = 12.0
+    chemistry_preset: str = "nmc811_li_ion"
     return_fields: bool = True
     field_direction: DirectionName = "z"
     max_solve_side: int | None = None
@@ -150,6 +161,7 @@ class SolveSpec:
         object.__setattr__(self, "solid_phases", tuple(int(p) for p in self.solid_phases))
         object.__setattr__(self, "r_cell_weights", _normalize_3f(self.r_cell_weights))
         object.__setattr__(self, "sigma_over_kappa_bulk", float(self.sigma_over_kappa_bulk))
+        object.__setattr__(self, "bulk_youngs_modulus_gpa", max(0.01, float(self.bulk_youngs_modulus_gpa)))
         if self.phase_diffusivities is not None:
             object.__setattr__(
                 self,
@@ -168,7 +180,8 @@ class SolveSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SolveSpec:
-        payload = dict(data)
+        allowed = set(cls.__dataclass_fields__.keys())
+        payload = {k: v for k, v in data.items() if k in allowed}
         if "directions" in payload:
             payload["directions"] = tuple(payload["directions"])
         if "solid_phases" in payload:
@@ -237,7 +250,7 @@ class BayesianSetpointSuggestion:
 
 @dataclass(frozen=True)
 class SolveRunSummary:
-    """Serializable summary of an executed microstructure + OpenImpala evaluation."""
+    """Serializable summary of an executed microstructure + OpenImpala + SMS evaluation."""
 
     run_id: str
     label: str
@@ -277,6 +290,9 @@ class SolveRunSummary:
     rev_sizes_vox: list[int] | None = None
     rev_deff_mean: list[float] | None = None
     rev_deff_std: list[float] | None = None
+    morphology: dict[str, Any] | None = None
+    electrochem: dict[str, Any] | None = None
+    mechanics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

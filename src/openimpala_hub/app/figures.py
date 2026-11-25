@@ -14,7 +14,7 @@ from ..engine.bridge import enforce_solve_grid_cap
 from ..engine.solver import ExecutedRun
 
 SlicePlane = Literal["xy", "xz", "yz"]
-FieldLayer = Literal["phase", "potential", "flux"]
+FieldLayer = Literal["phase", "potential", "flux", "vm_stress"]
 
 
 def _theme_tokens(dark_mode: bool) -> dict[str, str]:
@@ -96,12 +96,29 @@ def build_slice_figure(
     nz, ny, nx = vol.shape
 
     actual_layer = layer
+    if actual_layer == "vm_stress" and run.vm_stress_field is None:
+        return empty_placeholder_figure(
+            "Enable 'Compute 3D SMS Mechanics (E_eff & σ_vM)' in Step 2 and click Run to view von Mises stress.",
+            height=height,
+            dark_mode=dark_mode,
+        )
     if actual_layer == "potential" and run.potential_field is None:
         actual_layer = "phase"
     if actual_layer == "flux" and run.flux_field is None:
         actual_layer = "phase"
 
-    if actual_layer == "potential":
+    if actual_layer == "vm_stress":
+        src = run.vm_stress_field
+        colorscale = "Plasma"
+        zmin = 0.0
+        zmax = (
+            float(zmax_override)
+            if zmax_override is not None
+            else max(float(np.percentile(src, 99.2)), 0.1)  # type: ignore[arg-type]
+        )
+        cbar_title = "σ_vM [MPa]"
+        layer_title = "SMS 3D von Mises Stress σ_vM"
+    elif actual_layer == "potential":
         src = run.potential_field
         colorscale = "RdBu_r"
         zmin, zmax = 0.0, 1.0
@@ -685,4 +702,245 @@ def build_gp_steering_figure(
         row=2,
         col=1,
     )
+    return fig
+
+
+def build_morphology_figure(
+    run: ExecutedRun,
+    *,
+    height: int = 500,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Build 2x2 morphological validation dashboard: S2(r), pore partition, PSD, and chords."""
+    tok = _theme_tokens(dark_mode)
+    morph = run.summary.morphology
+    if not morph:
+        return empty_placeholder_figure(
+            "Morphology diagnostics unavailable for this run.",
+            height=height,
+            dark_mode=dark_mode,
+        )
+
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        subplot_titles=(
+            "Two-Point Correlation S₂(r) (FFT Wiener–Khinchin)",
+            "6-Connected Pore Network Partition",
+            f"Inscribed Pore Diameter PSD (D50 = {morph.get('d50_um', 0):.2f} µm)",
+            "Directional Mean Chord Lengths [µm]",
+        ),
+        horizontal_spacing=0.11,
+        vertical_spacing=0.19,
+    )
+
+    # (1, 1) S2(r)
+    fig.add_trace(
+        go.Scatter(
+            x=morph.get("s2_r_um", []),
+            y=morph.get("s2_radial", []),
+            mode="lines+markers",
+            name="Radial S₂(r)",
+            line={"color": "#3b82f6", "width": 2.4},
+            marker={"size": 5},
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=morph.get("s2_z_um", []),
+            y=morph.get("s2_z", []),
+            mode="lines",
+            name="Through-Plane Z",
+            line={"color": "#ef4444", "width": 1.9, "dash": "dash"},
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=morph.get("s2_xy_um", []),
+            y=morph.get("s2_xy", []),
+            mode="lines",
+            name="In-Plane XY",
+            line={"color": "#14b8a6", "width": 1.9, "dash": "dot"},
+        ),
+        row=1,
+        col=1,
+    )
+
+    # (1, 2) Pore connectivity partition
+    cats = ["Percolating", "Dead-End", "Trapped"]
+    p_vals = [
+        float(morph.get("percolating_fraction", 0.0)),
+        float(morph.get("dead_end_fraction", 0.0)),
+        float(morph.get("trapped_fraction", 0.0)),
+    ]
+    fig.add_trace(
+        go.Bar(
+            x=cats,
+            y=p_vals,
+            marker_color=["#10b981", "#f59e0b", "#ef4444"],
+            text=[f"{v*100:.1f}%" for v in p_vals],
+            textposition="auto",
+            name="Pore Fraction",
+            showlegend=False,
+        ),
+        row=1,
+        col=2,
+    )
+
+    # (2, 1) Inscribed pore diameter PSD
+    fig.add_trace(
+        go.Bar(
+            x=morph.get("psd_bin_centres_um", []),
+            y=morph.get("psd_fractions", []),
+            marker_color="#8b5cf6",
+            opacity=0.85,
+            name="Pore Diameter PDF",
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+    if morph.get("d50_um", 0.0) > 0.0:
+        fig.add_vline(
+            x=float(morph["d50_um"]),
+            line_dash="dash",
+            line_color="#f59e0b",
+            row=2,
+            col=1,
+        )
+
+    # (2, 2) Directional mean chord lengths (Z, Y, X -> plot X, Y, Z)
+    cz, cy, cx = morph.get("mean_chord_um_zyx", (0.0, 0.0, 0.0))
+    c_vals = [float(cx), float(cy), float(cz)]
+    fig.add_trace(
+        go.Bar(
+            x=["X (In-Plane)", "Y (In-Plane)", "Z (Through-Plane)"],
+            y=c_vals,
+            marker_color=["#0ea5e9", "#0ea5e9", "#f97316"],
+            text=[f"{v:.2f} µm" for v in c_vals],
+            textposition="auto",
+            showlegend=False,
+        ),
+        row=2,
+        col=2,
+    )
+
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"]},
+        margin={"l": 52, "r": 24, "t": 46, "b": 44},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.05, "x": 0.0},
+    )
+    fig.update_xaxes(gridcolor=tok["grid"])
+    fig.update_yaxes(gridcolor=tok["grid"])
+    fig.update_xaxes(title_text="Lag r [µm]", row=1, col=1)
+    fig.update_yaxes(title_text="S₂(r) [-]", row=1, col=1)
+    fig.update_yaxes(title_text="Volume Fraction [-]", row=1, col=2)
+    fig.update_xaxes(title_text="Inscribed Diameter D [µm]", row=2, col=1)
+    fig.update_yaxes(title_text="Relative Frequency", row=2, col=1)
+    fig.update_yaxes(title_text="Mean Chord [µm]", row=2, col=2)
+    return fig
+
+
+def build_electrochem_figure(
+    echem: dict[str, object],
+    *,
+    height: int = 470,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Build 1x2 C-rate galvanostatic discharge curves & stacked overpotential waterfall."""
+    tok = _theme_tokens(dark_mode)
+    curves = list(echem.get("curves") or [])  # type: ignore[arg-type]
+    if not curves:
+        return empty_placeholder_figure("No electrochemistry curves available.", height=height, dark_mode=dark_mode)
+
+    c_lim = float(echem.get("limiting_c_rate", 0.0))  # type: ignore[arg-type]
+    j_lim = float(echem.get("limiting_current_ma_cm2", 0.0))  # type: ignore[arg-type]
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=(
+            f"Galvanostatic Discharge Curves (J_lim = {j_lim:.1f} mA/cm² · C_lim = {c_lim:.2f}C)",
+            "Mid-SOC Overpotential Breakdown vs C-Rate",
+        ),
+        horizontal_spacing=0.11,
+    )
+
+    palette = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444"]
+    for idx, c in enumerate(curves):
+        fig.add_trace(
+            go.Scatter(
+                x=c["capacity_pct_grid"],
+                y=c["voltage_v_grid"],
+                mode="lines",
+                name=f"{c['c_rate']}C ({c['accessible_capacity_pct']:.0f}% cap)",
+                line={"color": palette[idx % len(palette)], "width": 2.6},
+            ),
+            row=1,
+            col=1,
+        )
+
+    crates = [f"{c['c_rate']}C" for c in curves]
+    fig.add_trace(
+        go.Bar(
+            x=crates,
+            y=[c["eta_ionic_mv"] for c in curves],
+            name="Ionic Ohmic (τ_Z)",
+            marker_color="#3b82f6",
+        ),
+        row=1,
+        col=2,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=crates,
+            y=[c["eta_electronic_mv"] for c in curves],
+            name="Electronic Contact (σ_Z)",
+            marker_color="#64748b",
+        ),
+        row=1,
+        col=2,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=crates,
+            y=[c["eta_kinetic_mv"] for c in curves],
+            name="Kinetic BV (a_s)",
+            marker_color="#10b981",
+        ),
+        row=1,
+        col=2,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=crates,
+            y=[c["eta_concentration_mv"] for c in curves],
+            name="Salt Depletion (Δc_e)",
+            marker_color="#ef4444",
+        ),
+        row=1,
+        col=2,
+    )
+
+    fig.update_layout(
+        height=height,
+        barmode="stack",
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"]},
+        margin={"l": 54, "r": 24, "t": 48, "b": 46},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.06, "x": 0.0},
+    )
+    fig.update_xaxes(gridcolor=tok["grid"])
+    fig.update_yaxes(gridcolor=tok["grid"])
+    fig.update_xaxes(title_text="Utilised Nominal Capacity [%]", range=[0, 102], row=1, col=1)
+    fig.update_yaxes(title_text="Terminal Voltage [V]", row=1, col=1)
+    fig.update_xaxes(title_text="Applied C-Rate", row=1, col=2)
+    fig.update_yaxes(title_text="Overpotential Loss [mV]", row=1, col=2)
     return fig

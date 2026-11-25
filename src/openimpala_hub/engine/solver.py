@@ -28,7 +28,11 @@ from .bridge import (
     resolve_voxel_size_metres,
     solver_input_for_openimpala,
 )
+from .electrochem import evaluate_cell_electrochemistry
 from .generators import load_or_generate_microstructure
+from .mechanics import run_optional_mechanics
+from .morphology import compute_morphology_report
+from .porousdiff_bridge import kinematic_compress_volume
 from .steering import (
     compute_cell_resistance,
     compute_diffusive_flux_field,
@@ -57,12 +61,13 @@ def _scoped_session(*, use_pure: bool = False):
 
 @dataclass
 class ExecutedRun:
-    """In-memory handle pairing a `SolveRunSummary` with calibrated 3D phase, potential, and flux fields."""
+    """In-memory handle pairing a `SolveRunSummary` with calibrated 3D phase, potential, flux, and stress fields."""
 
     summary: SolveRunSummary
     phase_volume: Volume
     potential_field: np.ndarray | None
     flux_field: np.ndarray | None
+    vm_stress_field: np.ndarray | None = None
 
 
 def _safe_float(val: object | None) -> float | None:
@@ -78,7 +83,7 @@ def run_transport_pipeline(
     *,
     existing_volume: Volume | None = None,
 ) -> ExecutedRun:
-    """Generate/load a microstructure, enforce physical units & grid caps, and execute `OpenImpala`."""
+    """Generate/load a microstructure, enforce physical units & grid caps, and execute `OpenImpala` (+ `SMS`)."""
     s_spec = solve_spec or SolveSpec()
 
     t0 = time.perf_counter()
@@ -91,6 +96,19 @@ def run_transport_pipeline(
         orig_shape = raw_vol.shape
     else:
         raw_vol, origin, precision_tag, orig_shape = load_or_generate_microstructure(micro_spec)
+
+    if (
+        micro_spec.virtual_compression_strain > 1e-4
+        and micro_spec.source_kind != "carbon_felt"
+    ):
+        raw_vol = kinematic_compress_volume(
+            raw_vol,
+            micro_spec.virtual_compression_strain,
+            conducting_phase=s_spec.conducting_phase,
+        )
+        precision_tag = (
+            f"{precision_tag} + virtual Z-compression (eps_z={micro_spec.virtual_compression_strain:.2f})"
+        )
     gen_time_s = time.perf_counter() - t0
 
     # Fail loudly if uncalibrated (`unit='voxel'`) BEFORE touching solver kernels
@@ -401,6 +419,29 @@ def run_transport_pipeline(
             "bpx": {"Parameter": bpx_param_block},
         }
 
+        morph_dict: dict[str, object] | None = None
+        if s_spec.compute_morphology:
+            morph_rep = compute_morphology_report(
+                capped_vol,
+                conducting_phase=s_spec.conducting_phase,
+                flow_direction=s_spec.field_direction,
+                use_openimpala_psd=True,
+            )
+            morph_dict = morph_rep.to_dict()
+
+    mech_dict: dict[str, object] | None = None
+    vm_stress_field: np.ndarray | None = None
+    if s_spec.compute_mechanics:
+        with SOLVER_LOCK:
+            mech_rep, vm_stress_field = run_optional_mechanics(
+                capped_vol,
+                solid_phases=s_spec.solid_phases,
+                direction=s_spec.field_direction,
+                bulk_youngs_modulus_gpa=s_spec.bulk_youngs_modulus_gpa,
+            )
+            if mech_rep is not None:
+                mech_dict = mech_rep.to_dict()
+
     solve_time_s = time.perf_counter() - t_solve_start
 
     # Compute 3D dimensionless diffusive flux & spatial zoom-ROI recommendations
@@ -449,6 +490,18 @@ def run_transport_pipeline(
         w_kin=w_kin,
     )
 
+    flow_axis_idx = {"z": 0, "y": 1, "x": 2}[s_spec.field_direction]
+    flow_sp_m = (dz_m, dy_m, dx_m)[flow_axis_idx]
+    thickness_m = float(capped_vol.shape[flow_axis_idx]) * float(flow_sp_m)
+    echem_rep = evaluate_cell_electrochemistry(
+        porosity=porosity,
+        d_eff_z=d_eff_z,
+        specific_surface_area_m_inv=active_ssa if active_ssa > 0.0 else 8.0e4,
+        solid_sigma_eff_z=solid_sigma_z if solid_sigma_z > 0.0 else 0.05,
+        thickness_m=thickness_m,
+        chemistry_key=s_spec.chemistry_preset,
+    )
+
     summary = SolveRunSummary(
         run_id=uuid.uuid4().hex[:10],
         label=micro_spec.label,
@@ -488,6 +541,9 @@ def run_transport_pipeline(
         rev_sizes_vox=rev_sizes_vox,
         rev_deff_mean=rev_deff_mean,
         rev_deff_std=rev_deff_std,
+        morphology=morph_dict,
+        electrochem=echem_rep.to_dict(),
+        mechanics=mech_dict,
     )
 
     return ExecutedRun(
@@ -495,4 +551,5 @@ def run_transport_pipeline(
         phase_volume=capped_vol,
         potential_field=potential_field,
         flux_field=flux_field,
+        vm_stress_field=vm_stress_field,
     )

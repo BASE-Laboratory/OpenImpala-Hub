@@ -63,6 +63,19 @@ def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
             assert "1.0000" in kpi_text
             assert "1.000" in kpi_text
 
+            # 2b. Toggle Teaching Lab drawer and verify Lab 1 badge turns verified after analytical cube solve
+            page.locator("#teaching-lab-btn").click()
+            page.wait_for_selector("#teaching-lab-drawer", state="visible", timeout=10000)
+            drawer_text = page.locator("#teaching-lab-drawer").inner_text()
+            assert "Exercises Verified" in drawer_text
+            assert "✅ Lab 1" in drawer_text
+
+            # 2c. Open Morphology & Pore Network and Cell Electrochemistry & Mechanics tabs
+            page.get_by_text("Morphology & Pore Network").click()
+            page.wait_for_selector("#morphology-graph .main-svg", state="visible", timeout=15000)
+            page.get_by_text("Cell Electrochemistry & Mechanics").click()
+            page.wait_for_selector("#electrochem-graph .main-svg", state="visible", timeout=15000)
+
             # 3. Open Digital Twin tab and test 1-click Jump to ROI #1
             page.get_by_text("Autonomous Planner (Digital Twin)").click()
             page.wait_for_selector("#jump-roi-btn", timeout=10000)
@@ -95,9 +108,13 @@ def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
             dl_file = tmp_path / dl_info.value.suggested_filename
             dl_info.value.save_as(str(dl_file))
             with zipfile.ZipFile(dl_file, "r") as zf:
-                assert {"manifest.json", "metrics.json", "bpx_parameters.json", "reproduce.py"}.issubset(
-                    set(zf.namelist())
-                )
+                assert {
+                    "manifest.json",
+                    "metrics.json",
+                    "bpx_parameters.json",
+                    "reproduce.py",
+                    "figures/morphology_and_electrochem.png",
+                }.issubset(set(zf.namelist()))
 
             assert js_errors == [], f"Unexpected browser JS errors: {js_errors}"
             context.close()

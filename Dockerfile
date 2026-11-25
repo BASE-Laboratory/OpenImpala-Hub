@@ -10,9 +10,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        cmake \
         curl \
+        gcc \
+        gfortran \
         git \
         libgomp1 \
+        libopenmpi-dev \
+        make \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (UID 1000 matches Hugging Face Spaces Docker & rootless best practices)
@@ -23,8 +28,16 @@ COPY pyproject.toml README.md LICENSE CITATION.cff AGENTS.md ./
 COPY src ./src
 COPY data ./data
 
+ARG SMS_GITHUB_TOKEN=""
 RUN pip install --upgrade pip \
     && pip install ".[mpi,server]" \
+    && if [ -n "$SMS_GITHUB_TOKEN" ]; then \
+         git config --global url."https://x-access-token:${SMS_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/" \
+         && pip install --no-deps ".[sms]" \
+         && rm -f /root/.gitconfig; \
+       else \
+         GIT_TERMINAL_PROMPT=0 pip install --no-deps ".[sms]" || echo "Optional private [sms] extra skipped"; \
+       fi \
     && chown -R hubuser:hubuser /app
 
 USER hubuser

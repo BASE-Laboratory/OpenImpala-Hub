@@ -313,6 +313,9 @@ def build_report_bundle_bytes(
         )
         zf.writestr("figures/slices_and_flux.png", _render_slices_and_flux_png(run))
         zf.writestr("figures/transport_and_profile.png", _render_transport_and_profile_png(run))
+        morph_echem_png = _render_morphology_and_electrochem_png(run)
+        if morph_echem_png is not None:
+            zf.writestr("figures/morphology_and_electrochem.png", morph_echem_png)
         if bayesian_suggestion is not None:
             zf.writestr(
                 "figures/bayesian_steering.png",
@@ -328,6 +331,87 @@ def build_report_bundle_bytes(
                         arcname = f"microstructure.ome.zarr/{fpath.relative_to(zarr_dir).as_posix()}"
                         zf.write(fpath, arcname=arcname)
 
+    return buf.getvalue()
+
+
+def _render_morphology_and_electrochem_png(run: ExecutedRun) -> bytes | None:
+    morph = run.summary.morphology
+    echem = run.summary.electrochem
+    if not morph and not echem:
+        return None
+
+    fig, axes = plt.subplots(2, 2, figsize=(11.2, 7.6), dpi=150)
+    fig.suptitle(
+        f"{run.summary.label} — 3D Morphology & Continuum Cell Electrochemistry",
+        fontsize=11,
+        fontweight="bold",
+    )
+
+    # (0, 0) Two-point correlation S2(r)
+    ax00 = axes[0, 0]
+    if morph and morph.get("s2_r_um"):
+        ax00.plot(morph["s2_r_um"], morph["s2_radial"], label="Radial S2(r)", color="#2563eb", lw=2)
+        ax00.plot(morph["s2_z_um"], morph["s2_z"], "--", label="Through-plane Z", color="#ef4444")
+        ax00.plot(morph["s2_xy_um"], morph["s2_xy"], ":", label="In-plane XY", color="#0d9488")
+        ax00.legend(fontsize=8)
+    ax00.set_title("Two-Point Correlation S2(r)")
+    ax00.set_xlabel("Lag r [um]")
+    ax00.set_ylabel("S2(r)")
+    ax00.grid(alpha=0.25)
+
+    # (0, 1) Pore network connectivity partition
+    ax01 = axes[0, 1]
+    if morph:
+        cats = ["Percolating", "Dead-End", "Trapped"]
+        vals = [
+            float(morph.get("percolating_fraction", 0.0)),
+            float(morph.get("dead_end_fraction", 0.0)),
+            float(morph.get("trapped_fraction", 0.0)),
+        ]
+        ax01.bar(cats, vals, color=["#10b981", "#f59e0b", "#ef4444"])
+        ax01.set_title(f"Pore Network Partition (D50={morph.get('d50_um', 0):.1f} um)")
+        ax01.set_ylabel("Volume Fraction [-]")
+        ax01.grid(axis="y", alpha=0.25)
+
+    # (1, 0) Galvanostatic discharge curves
+    ax10 = axes[1, 0]
+    if echem and echem.get("curves"):
+        palette = ["#0d9488", "#2563eb", "#f59e0b", "#ef4444"]
+        for idx, c in enumerate(echem["curves"]):
+            ax10.plot(
+                c["capacity_pct_grid"],
+                c["voltage_v_grid"],
+                lw=1.9,
+                color=palette[idx % len(palette)],
+                label=f"{c['c_rate']}C ({c['accessible_capacity_pct']:.0f}%)",
+            )
+        ax10.legend(fontsize=8)
+        ax10.set_title(f"Discharge Curves (C_lim = {echem.get('limiting_c_rate', 0):.2f}C)")
+    ax10.set_xlabel("Utilised Capacity [%]")
+    ax10.set_ylabel("Cell Voltage [V]")
+    ax10.grid(alpha=0.25)
+
+    # (1, 1) Overpotential breakdown vs C-rate
+    ax11 = axes[1, 1]
+    if echem and echem.get("curves"):
+        crates = [f"{c['c_rate']}C" for c in echem["curves"]]
+        ion = np.array([c["eta_ionic_mv"] for c in echem["curves"]])
+        elec = np.array([c["eta_electronic_mv"] for c in echem["curves"]])
+        kin = np.array([c["eta_kinetic_mv"] for c in echem["curves"]])
+        conc = np.array([c["eta_concentration_mv"] for c in echem["curves"]])
+        ax11.bar(crates, ion, label="Ionic", color="#3b82f6")
+        ax11.bar(crates, elec, bottom=ion, label="Electronic", color="#64748b")
+        ax11.bar(crates, kin, bottom=ion + elec, label="Kinetic", color="#10b981")
+        ax11.bar(crates, conc, bottom=ion + elec + kin, label="Concentration", color="#ef4444")
+        ax11.legend(fontsize=8)
+    ax11.set_title("Mid-SOC Overpotential Breakdown")
+    ax11.set_ylabel("Overpotential [mV]")
+    ax11.grid(axis="y", alpha=0.25)
+
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
     return buf.getvalue()
 
 

@@ -26,7 +26,7 @@ def build_modal_objects() -> tuple[Any, Any, Any]:
 
     cpu_image = (
         modal.Image.debian_slim(python_version="3.12")
-        .apt_install("git", "libgomp1")
+        .apt_install("git", "libgomp1", "gfortran", "libopenmpi-dev", "cmake", "gcc", "make")
         .pip_install(
             "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.3.0",
             "openimpala[openmpi]>=5.0,<6.0",
@@ -37,6 +37,9 @@ def build_modal_objects() -> tuple[Any, Any, Any]:
             "scikit-image>=0.22",
             "matplotlib>=3.8",
             "pillow>=10.0",
+        )
+        .run_commands(
+            'GIT_TERMINAL_PROMPT=0 pip install --no-deps "sms @ git+https://github.com/BASE-Laboratory/structural_mechanics_solver.git" || true'
         )
         .env(
             {
@@ -50,16 +53,20 @@ def build_modal_objects() -> tuple[Any, Any, Any]:
 
     gpu_image = (
         modal.Image.debian_slim(python_version="3.12")
-        .apt_install("git", "libgomp1")
+        .apt_install("git", "libgomp1", "gfortran", "libopenmpi-dev", "cmake", "gcc", "make")
         .pip_install(
             "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.3.0",
             "openimpala-cuda>=5.0,<6.0",
+            "porousdiff @ git+https://github.com/BASE-Laboratory/PorousDiff.git@feature/paper-ready-conditional",
             "openmpi",
             "numpy>=1.26",
             "scipy>=1.11",
             "scikit-image>=0.22",
             "matplotlib>=3.8",
             "pillow>=10.0",
+        )
+        .run_commands(
+            'GIT_TERMINAL_PROMPT=0 pip install --no-deps "sms @ git+https://github.com/BASE-Laboratory/structural_mechanics_solver.git" || true'
         )
         .env(
             {

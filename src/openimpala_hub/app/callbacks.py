@@ -1,8 +1,9 @@
-"""Reactive Dash callbacks connecting the UI to the headless OpenImpala-Hub engine (`v0.2`)."""
+"""Reactive Dash callbacks connecting the UI to the headless OpenImpala-Hub engine (`v0.3.0`)."""
 
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 import json
 from typing import Any
 
@@ -10,8 +11,10 @@ from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 import numpy as np
 
+from .. import __version__ as _HUB_VERSION
 from ..contracts import MicrostructureSpec, SolveSpec
 from ..engine.bundle import build_report_bundle_bytes
+from ..engine.electrochem import evaluate_cell_electrochemistry
 from ..engine.solver import ExecutedRun, run_transport_pipeline
 from ..engine.steering import compute_cell_resistance, suggest_next_setpoint_gp
 from ..engine.uploads import inspect_staged_volume, stage_upload_bytes
@@ -20,7 +23,9 @@ from .figures import (
     SlicePlane,
     build_3d_isosurface_figure,
     build_directional_and_profile_figure,
+    build_electrochem_figure,
     build_gp_steering_figure,
+    build_morphology_figure,
     build_slice_figure,
     build_upload_segmentation_preview_figure,
     empty_placeholder_figure,
@@ -93,7 +98,6 @@ def compute_gp_for_campaign(
     if not items:
         return None
 
-    # Primary campaign: Carbon Felt / PorousDiff clamping-pressure sweep [kPa]
     felt_pts = [
         h for h in items if h.get("source_kind") in ("carbon_felt", "porousdiff_gallery")
     ]
@@ -118,7 +122,29 @@ def compute_gp_for_campaign(
                 parameter_unit="kPa",
             )
 
-    # Secondary campaign: Porosity sweep within a single synthetic generator family
+    if active_source_kind in ("user_upload", "benchmark_dataset"):
+        v_pts = [h for h in items if h.get("source_kind") == active_source_kind]
+        if len(v_pts) >= 2:
+            xs = [float(p.get("virtual_compression_strain", 0.0)) for p in v_pts]
+            if len(set(round(x, 3) for x in xs)) >= 2:
+                ys = [
+                    _recompute_entry_r_cell(
+                        p,
+                        w_ion=w_ion,
+                        w_elec=w_elec,
+                        w_kin=w_kin,
+                        sigma_over_kappa_bulk=sigma_over_kappa_bulk,
+                    )
+                    for p in v_pts
+                ]
+                return suggest_next_setpoint_gp(
+                    xs,
+                    ys,
+                    bounds=(0.0, 0.50),
+                    parameter_name="Virtual Z-strain",
+                    parameter_unit="-",
+                )
+
     if active_source_kind:
         same_kind = [h for h in items if h.get("source_kind") == active_source_kind]
         if len(same_kind) >= 2:
@@ -142,7 +168,6 @@ def compute_gp_for_campaign(
                     parameter_unit="-",
                 )
 
-    # Fallback to felt campaign if >= 2 felt points exist even while viewing another preset
     if len(felt_pts) >= 2:
         xs = [float(p["clamping_kpa"]) for p in felt_pts]
         ys = [
@@ -167,6 +192,88 @@ def compute_gp_for_campaign(
     return None
 
 
+def serialize_campaign_json(history: list[dict[str, Any]]) -> str:
+    """Serialize `history` into a versioned portable campaign JSON document."""
+    doc = {
+        "schema": "openimpala_hub.campaign.v1",
+        "hub_version": _HUB_VERSION,
+        "exported_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "runs": list(history or []),
+    }
+    return json.dumps(doc, indent=2)
+
+
+def parse_campaign_json(raw_text: str) -> list[dict[str, Any]]:
+    """Validate and extract campaign history entries from a JSON string."""
+    parsed = json.loads(raw_text)
+    if isinstance(parsed, dict) and isinstance(parsed.get("runs"), list):
+        entries = parsed["runs"]
+    elif isinstance(parsed, list):
+        entries = parsed
+    else:
+        raise ValueError("Invalid campaign JSON: expected {'runs': [...]} or array.")
+
+    valid: list[dict[str, Any]] = []
+    for item in entries[:64]:
+        if not isinstance(item, dict) or "run_id" not in item or "porosity" not in item:
+            continue
+        valid.append(dict(item))
+    if not valid:
+        raise ValueError("Campaign JSON contains no valid run entries.")
+    return valid
+
+
+def evaluate_teaching_lab_progress(history: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Evaluate completion status of the 4 Greenwich MSc/BEng image-based modelling exercises."""
+    items = list(history or [])
+    has_cube = any(
+        h.get("source_kind") == "open_cube"
+        and abs(float(h.get("porosity", 0.0)) - 1.0) < 1e-3
+        and h.get("tau_z") is not None
+        and abs(float(h["tau_z"]) - 1.0) < 1e-2
+        for h in items
+    )
+    has_bruggeman = any(
+        h.get("source_kind") in ("benchmark_dataset", "overlapping_spheres", "gaussian_blobs")
+        and h.get("tau_z") is not None
+        and float(h["tau_z"]) > max(float(h.get("porosity", 1.0)), 0.05) ** (-0.5)
+        for h in items
+    )
+    felt_loads = {
+        round(float(h.get("clamping_kpa", 0.0)), 1)
+        for h in items
+        if h.get("source_kind") in ("carbon_felt", "porousdiff_gallery")
+    }
+    has_sweep = len(felt_loads) >= 4
+    has_high_rate_diff = any(
+        h.get("limiting_c_rate") is not None and float(h["limiting_c_rate"]) < 4.0
+        for h in items
+    )
+
+    return [
+        {
+            "step": "Lab 1 · Closed-Form Verification",
+            "passed": has_cube,
+            "instruction": "Click Preset '3a · Cube (τ=1.000)' and verify ε = 1.0000, τ_Z = 1.000, and uniform |J/J0| = 1.0.",
+        },
+        {
+            "step": "Lab 2 · Bruggeman Departure & Trapped Pores",
+            "passed": has_bruggeman,
+            "instruction": "Run Preset '3b · Benchmark Spheres' or Gaussian Blobs, then inspect τ_Z > ε^(-0.5) and Dead-End/Trapped pores in Tab 3.",
+        },
+        {
+            "step": "Lab 3 · Anisotropic Compression Campaign",
+            "passed": has_sweep,
+            "instruction": "Evaluate ≥ 4 Carbon Felt clamping loads (click '⚡ Run 5-Point Campaign Sweep' or '⚡ Execute Recommended Scan' in Tab 6).",
+        },
+        {
+            "step": "Lab 4 · Fast-Charging Salt-Depletion Limit",
+            "passed": has_high_rate_diff,
+            "instruction": "Run Preset '2 · 3-Phase Battery Cathode' (or high-load felt) and inspect 4C accessible capacity drop vs C_lim in Tab 4.",
+        },
+    ]
+
+
 def register_callbacks(app: Dash, registry: RunRegistry) -> None:
     """Attach all interactive callbacks to `app`."""
 
@@ -189,7 +296,76 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         return "dark" if theme == "dark" else "light"
 
     @app.callback(
+        Output("teaching-lab-open-store", "data"),
+        Input("teaching-lab-btn", "n_clicks"),
+        State("teaching-lab-open-store", "data"),
+        prevent_initial_call=True,
+    )
+    def toggle_teaching_lab(n_clicks: int, is_open: bool | None) -> bool:
+        if not n_clicks:
+            raise PreventUpdate
+        return not bool(is_open)
+
+    @app.callback(
+        Output("teaching-lab-drawer", "style"),
+        Output("teaching-lab-drawer", "children"),
+        Input("teaching-lab-open-store", "data"),
+        Input("run-history-store", "data"),
+    )
+    def render_teaching_lab_drawer(
+        is_open: bool | None,
+        history: list[dict[str, Any]] | None,
+    ) -> tuple[dict[str, str], Any]:
+        if not is_open:
+            return {"display": "none"}, []
+        steps = evaluate_teaching_lab_progress(history)
+        done_cnt = sum(1 for st in steps if st["passed"])
+        cards = [
+            html.Div(
+                className="lab-step-card lab-step-done" if st["passed"] else "lab-step-card",
+                children=[
+                    html.Div(
+                        [
+                            html.Strong(
+                                ("✅ " if st["passed"] else "⬜ ") + st["step"],
+                                style={"fontSize": "12.5px"},
+                            )
+                        ]
+                    ),
+                    html.Div(
+                        st["instruction"],
+                        style={"marginTop": "4px", "color": "var(--text-secondary)"},
+                    ),
+                ],
+            )
+            for st in steps
+        ]
+        content = [
+            html.Div(
+                style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                children=[
+                    html.Div(
+                        [
+                            html.Span("Greenwich MSc / BEng Lab", className="pill pill-origin"),
+                            html.Strong(
+                                "Guided Image-Based Battery Modelling Worksheet",
+                                style={"fontSize": "14px"},
+                            ),
+                        ]
+                    ),
+                    html.Span(
+                        f"{done_cnt} / {len(steps)} Exercises Verified",
+                        style={"fontSize": "12.5px", "fontWeight": "700"},
+                    ),
+                ],
+            ),
+            html.Div(cards, className="lab-steps-grid"),
+        ]
+        return {"display": "block"}, content
+
+    @app.callback(
         Output("upload-container", "style"),
+        Output("virtual-compress-block", "style"),
         Output("grid-side-block", "style"),
         Output("clamping-control-block", "style"),
         Output("porosity-control-block", "style"),
@@ -199,10 +375,23 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
     )
     def update_sidebar_visibility(
         source_kind: str,
-    ) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str], dict[str, str], bool]:
+    ) -> tuple[
+        dict[str, str],
+        dict[str, str],
+        dict[str, str],
+        dict[str, str],
+        dict[str, str],
+        dict[str, str],
+        bool,
+    ]:
         is_upload = source_kind == "user_upload"
         is_fixed = source_kind in ("user_upload", "benchmark_dataset", "porousdiff_gallery")
         show_upload = {"display": "block"} if is_upload else {"display": "none"}
+        show_vcomp = (
+            {"display": "block"}
+            if source_kind in ("user_upload", "benchmark_dataset")
+            else {"display": "none"}
+        )
         show_grid = {"display": "none"} if is_fixed else {"display": "block"}
         show_clamp = (
             {"display": "block"}
@@ -211,11 +400,16 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         )
         show_porosity = (
             {"display": "none"}
-            if source_kind in ("user_upload", "benchmark_dataset", "open_cube", "porousdiff_gallery")
+            if source_kind in (
+                "user_upload",
+                "benchmark_dataset",
+                "open_cube",
+                "porousdiff_gallery",
+            )
             else {"display": "block"}
         )
         show_seed = {"display": "none"} if is_fixed else {"display": "block"}
-        return show_upload, show_grid, show_clamp, show_porosity, show_seed, is_upload
+        return show_upload, show_vcomp, show_grid, show_clamp, show_porosity, show_seed, is_upload
 
     @app.callback(
         Output("uploaded-file-store", "data"),
@@ -339,12 +533,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Output("homogenisation-check", "value"),
         Output("run-error-banner", "children"),
         Input("run-pipeline-btn", "n_clicks"),
+        Input("run-batch-sweep-btn", "n_clicks"),
         Input("preset-btn-carbon", "n_clicks"),
         Input("preset-btn-cathode", "n_clicks"),
         Input("preset-btn-cube", "n_clicks"),
         Input("preset-btn-spheres", "n_clicks"),
         Input("run-suggested-setpoint-btn", "n_clicks"),
         Input("reset-campaign-btn", "n_clicks"),
+        Input("upload-campaign-box", "contents"),
         State("source-kind-dropdown", "value"),
         State("grid-side-slider", "value"),
         State("voxel-size-input", "value"),
@@ -352,12 +548,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         State("voxel-dy-input", "value"),
         State("voxel-dx-input", "value"),
         State("clamping-kpa-slider", "value"),
+        State("virtual-compress-slider", "value"),
         State("porosity-slider", "value"),
         State("seed-input", "value"),
         State("conducting-phase-dropdown", "value"),
         State("electrode-role-dropdown", "value"),
         State("solver-backend-dropdown", "value"),
         State("homogenisation-check", "value"),
+        State("chemistry-preset-dropdown", "value"),
         State("uploaded-file-store", "data"),
         State("upload-seg-mode-dropdown", "value"),
         State("upload-threshold-input", "value"),
@@ -373,12 +571,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
     )
     def execute_run_or_preset(
         _n_run: int,
+        _n_batch: int,
         _n_p1: int,
         _n_p2: int,
         _n_p3: int,
         _n_p4: int,
         _n_sug: int,
         _n_reset: int,
+        campaign_upload_contents: str | None,
         source_kind: str,
         grid_side: int,
         voxel_um: float | None,
@@ -386,12 +586,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         voxel_dy: float | None,
         voxel_dx: float | None,
         clamping_kpa: float,
+        virtual_strain: float | None,
         porosity: float,
         seed: int | None,
         conducting_phase: int | None,
         electrode_role: str | None,
         solver_backend: str,
         check_flags: list[str] | None,
+        chemistry_preset: str | None,
         uploaded_info: dict[str, Any] | None,
         seg_mode: str | None,
         manual_thr: float | None,
@@ -427,6 +629,43 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                 None,
             )
 
+        if trig == "upload-campaign-box":
+            if not campaign_upload_contents:
+                raise PreventUpdate
+            try:
+                _, b64_camp = campaign_upload_contents.split(",", 1)
+                loaded_hist = parse_campaign_json(base64.b64decode(b64_camp).decode("utf-8"))
+                last_item = loaded_hist[-1]
+                rehydrated = registry.get_or_rehydrate(last_item["run_id"], loaded_hist)
+                act_id = last_item["run_id"] if rehydrated else registry.default_run_id
+                return (
+                    act_id,
+                    loaded_hist,
+                    last_item.get("source_kind", "carbon_felt"),
+                    no_update,
+                    no_update,
+                    float(last_item.get("clamping_kpa", 150.0)),
+                    float(last_item.get("porosity", 0.74)),
+                    no_update,
+                    no_update,
+                    no_update,
+                    None,
+                )
+            except Exception as exc:
+                return (
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    no_update,
+                    html.Div(f"Campaign load failed: {exc}", className="error-box"),
+                )
+
         preset_map = {
             "preset-btn-carbon": "carbon_felt_compression",
             "preset-btn-cathode": "composite_cathode_3phase",
@@ -439,164 +678,276 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             float(w_kin if w_kin is not None else 0.15),
         )
         sig_kap = float(sigma_kappa if sigma_kappa is not None else 16.0)
+        chem_key = str(chemistry_preset or "nmc811_li_ion")
+        flags = set(check_flags or [])
 
         try:
-            if trig in preset_map:
-                preset = PRESETS[preset_map[trig]]
-                side = min(int(preset.microstructure.shape[0]), 64)
-                mspec = MicrostructureSpec(
-                    **{**preset.microstructure.to_dict(), "shape": (side, side, side)}
-                )
-                sspec = SolveSpec(
-                    **{
-                        **preset.solve.to_dict(),
-                        "r_cell_weights": weights,
-                        "sigma_over_kappa_bulk": sig_kap,
-                    }
-                )
-            elif trig == "run-suggested-setpoint-btn":
-                target_kpa = float(suggested_val if suggested_val is not None else 220.0)
-                side = int(grid_side or 48)
-                mspec = make_carbon_felt_spec(
-                    target_kpa,
-                    shape=(side, side, side),
-                    seed=int(seed if seed is not None else 42),
-                )
-                base_solve = PRESETS["carbon_felt_compression"].solve
-                sspec = SolveSpec(
-                    **{
-                        **base_solve.to_dict(),
-                        "r_cell_weights": weights,
-                        "sigma_over_kappa_bulk": sig_kap,
-                    }
-                )
+            # Resolve anisotropic (dz, dy, dx) vs isotropic voxel_size_um
+            vz: tuple[float, float, float] | None
+            if (
+                voxel_dz is not None
+                and voxel_dy is not None
+                and voxel_dx is not None
+                and float(voxel_dz) > 0
+                and float(voxel_dy) > 0
+                and float(voxel_dx) > 0
+            ):
+                vz = (float(voxel_dz), float(voxel_dy), float(voxel_dx))
+            elif voxel_um is not None and float(voxel_um) > 0:
+                vz = (float(voxel_um), float(voxel_um), float(voxel_um))
             else:
-                side = int(grid_side or 48)
+                vz = None
+
+            if trig == "run-batch-sweep-btn":
+                # 1-Click 5-Point Campaign Sweep (uses 40^3 on synthetic grids so 5 solves complete in ~3 s)
+                sweep_side = min(int(grid_side or 48), 48)
                 sd = int(seed if seed is not None else 42)
                 role = str(electrode_role or "negative")
-                if source_kind == "multiphase_electrode" and trig == "run-pipeline-btn" and role == "negative":
-                    # Preserve user choice if explicitly set, otherwise cathode defaults nicely on Preset #2
-                    pass
-
-                # Resolve anisotropic (dz, dy, dx) vs isotropic voxel_size_um
-                vz: tuple[float, float, float] | None
-                if (
-                    voxel_dz is not None
-                    and voxel_dy is not None
-                    and voxel_dx is not None
-                    and float(voxel_dz) > 0
-                    and float(voxel_dy) > 0
-                    and float(voxel_dx) > 0
-                ):
-                    vz = (float(voxel_dz), float(voxel_dy), float(voxel_dx))
-                elif voxel_um is not None and float(voxel_um) > 0:
-                    vz = (float(voxel_um), float(voxel_um), float(voxel_um))
-                else:
-                    vz = None
-
-                if source_kind == "carbon_felt":
-                    base_felt = make_carbon_felt_spec(
-                        float(clamping_kpa),
-                        shape=(side, side, side),
-                        seed=sd,
-                    )
-                    mspec = MicrostructureSpec(
-                        **{
-                            **base_felt.to_dict(),
-                            "voxel_size_um": vz,
-                            "porosity": float(porosity),
-                            "electrode_role": role,
-                        }
-                    )
-                elif source_kind == "user_upload":
-                    if not uploaded_info or not uploaded_info.get("path"):
-                        raise ValueError(
-                            "Upload a .tif, .npy, .h5, or .ome.zarr.zip volume before running."
-                        )
-                    mode = str(seg_mode or "otsu").lower()
-                    if mode == "manual":
-                        thr_arg: float | str | None = float(
-                            manual_thr
-                            if manual_thr is not None
-                            else uploaded_info.get("otsu_threshold", 0.5)
-                        )
-                    elif mode == "labels":
-                        thr_arg = "labels"
-                    else:
-                        thr_arg = "otsu"
-
-                    cal_orig = uploaded_info.get("calibrated_voxel_um_zyx")
-                    override_cal = False
-                    if cal_orig and vz is not None:
-                        override_cal = any(
-                            abs(float(vz[i]) - float(cal_orig[i])) > 1e-4 for i in range(3)
-                        )
-
-                    mspec = MicrostructureSpec(
-                        source_kind="user_upload",
-                        label=f"Upload: {uploaded_info['name']}",
-                        shape=(side, side, side),
-                        voxel_size_um=vz,
-                        seed=sd,
-                        upload_path=str(uploaded_info["path"]),
-                        threshold=thr_arg,
-                        dark_is_pore=(polarity != "bright"),
-                        override_calibrated_spacing=override_cal,
-                        coarsen_policy=(
-                            "mode_downsample"
-                            if coarsen_policy == "mode_downsample"
-                            else "crop_center"
-                        ),
-                        electrode_role=role,  # type: ignore[arg-type]
-                    )
-                else:
-                    mspec = MicrostructureSpec(
-                        source_kind=source_kind,  # type: ignore[arg-type]
-                        label=f"{source_kind} ({side}³)",
-                        shape=(side, side, side),
-                        voxel_size_um=vz,
-                        seed=sd,
-                        porosity=float(porosity),
-                        clamping_kpa=float(clamping_kpa),
-                        dataset_name=(
-                            "sphere_pack" if source_kind == "benchmark_dataset" else None
-                        ),
-                        electrode_role=role,  # type: ignore[arg-type]
-                    )
-
                 cond_id = int(conducting_phase if conducting_phase is not None else 0)
+                solid_p = () if source_kind == "open_cube" else ((0,) if cond_id == 1 else (1, 2))
                 phase_diffs = (
                     {0: 1.0, 1: 0.0, 2: 0.18}
-                    if (mspec.source_kind == "multiphase_electrode" and cond_id == 0)
+                    if (source_kind == "multiphase_electrode" and cond_id == 0)
                     else None
                 )
-                if mspec.source_kind == "open_cube":
-                    solid_p: tuple[int, ...] = ()
-                elif cond_id == 1:
-                    solid_p = (0,)
-                else:
-                    solid_p = (1, 2)
-
-                flags = set(check_flags or [])
-                sspec = SolveSpec(
+                sweep_sspec = SolveSpec(
                     conducting_phase=cond_id,
                     solid_phases=solid_p,
                     phase_diffusivities=phase_diffs,
                     directions=("x", "y", "z"),
                     solver=solver_backend,  # type: ignore[arg-type]
-                    compute_homogenisation=("homog" in flags),
-                    compute_solid_wiring=(mspec.source_kind != "open_cube"),
-                    compute_rev_study=("rev" in flags),
+                    compute_homogenisation=False,
+                    compute_solid_wiring=(source_kind != "open_cube"),
+                    compute_rev_study=False,
+                    compute_mechanics=("sms" in flags),
+                    chemistry_preset=chem_key,
                     return_fields=True,
                     field_direction="z",
                     r_cell_weights=weights,
                     sigma_over_kappa_bulk=sig_kap,
                 )
 
-            executed = run_transport_pipeline(mspec, sspec)
-            rid = registry.put(executed)
-            new_hist = list(history or [])
-            new_hist.append(_history_entry_from_run(executed))
+                sweep_specs: list[MicrostructureSpec] = []
+                if source_kind in ("carbon_felt", "porousdiff_gallery"):
+                    for kpa in (40.0, 110.0, 190.0, 290.0, 420.0):
+                        base_f = make_carbon_felt_spec(kpa, shape=(sweep_side, sweep_side, sweep_side), seed=sd)
+                        sweep_specs.append(
+                            MicrostructureSpec(
+                                **{
+                                    **base_f.to_dict(),
+                                    "source_kind": source_kind,
+                                    "voxel_size_um": vz or (1.6, 1.6, 1.6),
+                                    "electrode_role": role,
+                                }
+                            )
+                        )
+                elif source_kind == "user_upload":
+                    if not uploaded_info or not uploaded_info.get("path"):
+                        raise ValueError("Upload a volume first to run a 5-point virtual compression sweep.")
+                    mode = str(seg_mode or "otsu").lower()
+                    thr_arg: float | str | None = (
+                        float(manual_thr if manual_thr is not None else uploaded_info.get("otsu_threshold", 0.5))
+                        if mode == "manual"
+                        else ("labels" if mode == "labels" else "otsu")
+                    )
+                    for vs in (0.0, 0.10, 0.20, 0.30, 0.40):
+                        sweep_specs.append(
+                            MicrostructureSpec(
+                                source_kind="user_upload",
+                                label=f"Upload {uploaded_info['name']} (ε_z={vs:.0%})",
+                                upload_path=str(uploaded_info["path"]),
+                                voxel_size_um=vz,
+                                threshold=thr_arg,
+                                dark_is_pore=(polarity != "bright"),
+                                virtual_compression_strain=vs,
+                                electrode_role=role,  # type: ignore[arg-type]
+                            )
+                        )
+                elif source_kind == "benchmark_dataset":
+                    for vs in (0.0, 0.10, 0.20, 0.30, 0.40):
+                        sweep_specs.append(
+                            MicrostructureSpec(
+                                source_kind="benchmark_dataset",
+                                label=f"Sphere Pack (ε_z={vs:.0%})",
+                                dataset_name="sphere_pack",
+                                voxel_size_um=vz or (1.0, 1.0, 1.0),
+                                virtual_compression_strain=vs,
+                                electrode_role=role,  # type: ignore[arg-type]
+                            )
+                        )
+                else:
+                    for eps_p in (0.36, 0.48, 0.60, 0.72, 0.84):
+                        sweep_specs.append(
+                            MicrostructureSpec(
+                                source_kind=source_kind,  # type: ignore[arg-type]
+                                label=f"{source_kind} (ε={eps_p:.2f})",
+                                shape=(sweep_side, sweep_side, sweep_side),
+                                voxel_size_um=vz or (1.2, 1.2, 1.2),
+                                porosity=eps_p,
+                                seed=sd,
+                                electrode_role=role,  # type: ignore[arg-type]
+                            )
+                        )
+
+                new_hist = list(history or [])
+                last_exec: ExecutedRun | None = None
+                for sp_item in sweep_specs:
+                    last_exec = run_transport_pipeline(sp_item, sweep_sspec)
+                    registry.put(last_exec)
+                    new_hist.append(_history_entry_from_run(last_exec))
+                assert last_exec is not None
+                mspec = sweep_specs[-1]
+                sspec = sweep_sspec
+                executed = last_exec
+                rid = executed.summary.run_id
+            else:
+                if trig in preset_map:
+                    preset = PRESETS[preset_map[trig]]
+                    side = min(int(preset.microstructure.shape[0]), 64)
+                    mspec = MicrostructureSpec(
+                        **{**preset.microstructure.to_dict(), "shape": (side, side, side)}
+                    )
+                    sspec = SolveSpec(
+                        **{
+                            **preset.solve.to_dict(),
+                            "compute_mechanics": ("sms" in flags),
+                            "chemistry_preset": chem_key,
+                            "r_cell_weights": weights,
+                            "sigma_over_kappa_bulk": sig_kap,
+                        }
+                    )
+                elif trig == "run-suggested-setpoint-btn":
+                    target_kpa = float(suggested_val if suggested_val is not None else 220.0)
+                    side = int(grid_side or 48)
+                    mspec = make_carbon_felt_spec(
+                        target_kpa,
+                        shape=(side, side, side),
+                        seed=int(seed if seed is not None else 42),
+                    )
+                    base_solve = PRESETS["carbon_felt_compression"].solve
+                    sspec = SolveSpec(
+                        **{
+                            **base_solve.to_dict(),
+                            "compute_mechanics": ("sms" in flags),
+                            "chemistry_preset": chem_key,
+                            "r_cell_weights": weights,
+                            "sigma_over_kappa_bulk": sig_kap,
+                        }
+                    )
+                else:
+                    side = int(grid_side or 48)
+                    sd = int(seed if seed is not None else 42)
+                    role = str(electrode_role or "negative")
+                    v_strain = float(virtual_strain or 0.0)
+
+                    if source_kind == "carbon_felt":
+                        base_felt = make_carbon_felt_spec(
+                            float(clamping_kpa),
+                            shape=(side, side, side),
+                            seed=sd,
+                        )
+                        mspec = MicrostructureSpec(
+                            **{
+                                **base_felt.to_dict(),
+                                "voxel_size_um": vz,
+                                "porosity": float(porosity),
+                                "electrode_role": role,
+                            }
+                        )
+                    elif source_kind == "user_upload":
+                        if not uploaded_info or not uploaded_info.get("path"):
+                            raise ValueError(
+                                "Upload a .tif, .npy, .h5, or .ome.zarr.zip volume before running."
+                            )
+                        mode = str(seg_mode or "otsu").lower()
+                        if mode == "manual":
+                            thr_arg = float(
+                                manual_thr
+                                if manual_thr is not None
+                                else uploaded_info.get("otsu_threshold", 0.5)
+                            )
+                        elif mode == "labels":
+                            thr_arg = "labels"
+                        else:
+                            thr_arg = "otsu"
+
+                        cal_orig = uploaded_info.get("calibrated_voxel_um_zyx")
+                        override_cal = False
+                        if cal_orig and vz is not None:
+                            override_cal = any(
+                                abs(float(vz[i]) - float(cal_orig[i])) > 1e-4 for i in range(3)
+                            )
+
+                        mspec = MicrostructureSpec(
+                            source_kind="user_upload",
+                            label=f"Upload: {uploaded_info['name']}",
+                            shape=(side, side, side),
+                            voxel_size_um=vz,
+                            seed=sd,
+                            upload_path=str(uploaded_info["path"]),
+                            threshold=thr_arg,
+                            dark_is_pore=(polarity != "bright"),
+                            override_calibrated_spacing=override_cal,
+                            virtual_compression_strain=v_strain,
+                            coarsen_policy=(
+                                "mode_downsample"
+                                if coarsen_policy == "mode_downsample"
+                                else "crop_center"
+                            ),
+                            electrode_role=role,  # type: ignore[arg-type]
+                        )
+                    else:
+                        mspec = MicrostructureSpec(
+                            source_kind=source_kind,  # type: ignore[arg-type]
+                            label=f"{source_kind} ({side}³)",
+                            shape=(side, side, side),
+                            voxel_size_um=vz,
+                            seed=sd,
+                            porosity=float(porosity),
+                            clamping_kpa=float(clamping_kpa),
+                            virtual_compression_strain=(
+                                v_strain if source_kind == "benchmark_dataset" else 0.0
+                            ),
+                            dataset_name=(
+                                "sphere_pack" if source_kind == "benchmark_dataset" else None
+                            ),
+                            electrode_role=role,  # type: ignore[arg-type]
+                        )
+
+                    cond_id = int(conducting_phase if conducting_phase is not None else 0)
+                    phase_diffs = (
+                        {0: 1.0, 1: 0.0, 2: 0.18}
+                        if (mspec.source_kind == "multiphase_electrode" and cond_id == 0)
+                        else None
+                    )
+                    if mspec.source_kind == "open_cube":
+                        solid_p = ()
+                    elif cond_id == 1:
+                        solid_p = (0,)
+                    else:
+                        solid_p = (1, 2)
+
+                    sspec = SolveSpec(
+                        conducting_phase=cond_id,
+                        solid_phases=solid_p,
+                        phase_diffusivities=phase_diffs,
+                        directions=("x", "y", "z"),
+                        solver=solver_backend,  # type: ignore[arg-type]
+                        compute_homogenisation=("homog" in flags),
+                        compute_solid_wiring=(mspec.source_kind != "open_cube"),
+                        compute_rev_study=("rev" in flags),
+                        compute_mechanics=("sms" in flags),
+                        chemistry_preset=chem_key,
+                        return_fields=True,
+                        field_direction="z",
+                        r_cell_weights=weights,
+                        sigma_over_kappa_bulk=sig_kap,
+                    )
+
+                executed = run_transport_pipeline(mspec, sspec)
+                rid = registry.put(executed)
+                new_hist = list(history or [])
+                new_hist.append(_history_entry_from_run(executed))
 
             vz_out = executed.summary.voxel_size_um_zyx[2]
             checks_out = []
@@ -604,6 +955,8 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                 checks_out.append("homog")
             if sspec.compute_rev_study:
                 checks_out.append("rev")
+            if sspec.compute_mechanics:
+                checks_out.append("sms")
 
             return (
                 rid,
@@ -652,13 +1005,15 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Input("active-run-id-store", "data"),
         Input("slice-plane-radio", "value"),
         Input("jump-roi-btn", "n_clicks"),
+        State("run-history-store", "data"),
     )
     def sync_slice_slider_bounds(
         run_id: str | None,
         plane: str,
         _n_jump: int,
+        history: list[dict[str, Any]] | None,
     ) -> tuple[int, int]:
-        run = registry.get(run_id)
+        run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             return 47, 24
         max_idx, mid_idx = plane_slider_bounds_for_run(run, plane)
@@ -669,9 +1024,13 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Output("kpi-cards-row", "children"),
         Output("pybamm-bpx-preview", "children"),
         Input("active-run-id-store", "data"),
+        State("run-history-store", "data"),
     )
-    def render_summary_strip(run_id: str | None) -> tuple[Any, list[Any], str]:
-        run = registry.get(run_id)
+    def render_summary_strip(
+        run_id: str | None,
+        history: list[dict[str, Any]] | None,
+    ) -> tuple[Any, list[Any], str]:
+        run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             return html.Div("No active run."), [], "{}"
 
@@ -699,12 +1058,22 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             else f"({vz[0]:g}, {vz[1]:g}, {vz[2]:g}) µm"
         )
 
+        mech_pill = []
+        if s.mechanics and s.mechanics.get("backend") == "sms-fortran":
+            mech_pill = [
+                html.Span(
+                    f"SMS E_eff: {s.mechanics['effective_modulus_gpa']:.3f} GPa",
+                    className="pill",
+                )
+            ]
+
         banner = [
             html.Div(
                 children=[
                     html.Span(f"origin: {s.data_origin}", className="pill pill-origin"),
                     html.Span(f"role: {s.electrode_role}", className="pill"),
                     html.Span(f"solver: {s.solver_backend}", className="pill"),
+                    *mech_pill,
                     html.Span(
                         f"{s.shape_zyx[2]}×{s.shape_zyx[1]}×{s.shape_zyx[0]} @ {vox_badge}",
                         className="pill",
@@ -736,6 +1105,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             if s.conducting_phase != 0
             else "Conducting Porosity ε"
         )
+        clim = (s.electrochem or {}).get("limiting_c_rate", 0.0)
         cards = [
             html.Div(
                 className="kpi-card",
@@ -777,12 +1147,12 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             html.Div(
                 className="kpi-card",
                 children=[
-                    html.Div("Solid Z-Conductivity σ_eff,Z / σ_0", className="kpi-label"),
-                    html.Div(f"{s.solid_effective_conductivity_z:.3f}", className="kpi-value"),
+                    html.Div("Limiting C-Rate C_lim", className="kpi-label"),
+                    html.Div(f"{clim:.2f}C", className="kpi-value"),
                     html.Div(
-                        "Through-plane wired"
+                        f"σ_eff,Z = {s.solid_effective_conductivity_z:.3f}"
                         if s.solid_through_plane_percolates
-                        else "Single-phase / unpercolated",
+                        else "Salt-depletion threshold",
                         className="kpi-sub",
                     ),
                 ],
@@ -801,6 +1171,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             "electrode_role": s.electrode_role,
             "pybamm_parameters": s.pybamm_parameters,
             "homogenised_tensor_xyz": s.homogenised_tensor_xyz,
+            "mechanics": s.mechanics,
             "phase_fractions": s.phase_fractions,
         }
         if s.rev_sizes_vox:
@@ -819,6 +1190,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Input("slice-layer-radio", "value"),
         Input("slice-index-slider", "value"),
         Input("theme-store", "data"),
+        State("run-history-store", "data"),
     )
     def render_2d_and_profile(
         run_id: str | None,
@@ -826,9 +1198,10 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         layer: str,
         slice_idx: int,
         theme: str | None,
+        history: list[dict[str, Any]] | None,
     ) -> tuple[Any, Any]:
         dark = theme == "dark"
-        run = registry.get(run_id)
+        run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             empty = empty_placeholder_figure(dark_mode=dark)
             return empty, empty
@@ -851,6 +1224,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Input("clip-z-slider", "value"),
         Input("clip-x-slider", "value"),
         Input("theme-store", "data"),
+        State("run-history-store", "data"),
     )
     def render_3d_tab_gated(
         active_tab: str,
@@ -860,11 +1234,12 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         clip_z: list[float],
         clip_x: list[float],
         theme: str | None,
+        history: list[dict[str, Any]] | None,
     ) -> Any:
         if active_tab != "tab-3d":
             raise PreventUpdate
         dark = theme == "dark"
-        run = registry.get(run_id)
+        run = registry.get_or_rehydrate(run_id, history)
         if run is None:
             return empty_placeholder_figure(dark_mode=dark, height=540)
         flags = set(opts or [])
@@ -880,6 +1255,171 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             show_roi_box=("roi" in flags),
             dark_mode=dark,
         )
+
+    @app.callback(
+        Output("morphology-kpi-strip", "children"),
+        Output("morphology-graph", "figure"),
+        Input("main-tabs", "value"),
+        Input("active-run-id-store", "data"),
+        Input("theme-store", "data"),
+        State("run-history-store", "data"),
+    )
+    def render_morphology_tab(
+        active_tab: str,
+        run_id: str | None,
+        theme: str | None,
+        history: list[dict[str, Any]] | None,
+    ) -> tuple[list[Any], Any]:
+        if active_tab != "tab-morph":
+            raise PreventUpdate
+        dark = theme == "dark"
+        run = registry.get_or_rehydrate(run_id, history)
+        if run is None or not run.summary.morphology:
+            return [], empty_placeholder_figure(dark_mode=dark, height=480)
+        m = run.summary.morphology
+        kpis = [
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Percolating Pore Fraction", className="kpi-label"),
+                    html.Div(f"{m['percolating_fraction']*100:.1f}%", className="kpi-value"),
+                    html.Div(f"{m['num_percolating_clusters']} spanning cluster(s)", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Dead-End Pore Fraction", className="kpi-label"),
+                    html.Div(f"{m['dead_end_fraction']*100:.1f}%", className="kpi-value"),
+                    html.Div(f"{m['num_dead_end_clusters']} single-face pocket(s)", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Trapped / Isolated Pores", className="kpi-label"),
+                    html.Div(f"{m['trapped_fraction']*100:.1f}%", className="kpi-value"),
+                    html.Div(f"{m['num_trapped_clusters']} disconnected cavity/ies", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Median Pore Diameter D50", className="kpi-label"),
+                    html.Div(f"{m['d50_um']:.2f} µm", className="kpi-value"),
+                    html.Div(f"D10={m['d10_um']:.1f} · D90={m['d90_um']:.1f} µm", className="kpi-sub"),
+                ],
+            ),
+        ]
+        return kpis, build_morphology_figure(run, dark_mode=dark)
+
+    @app.callback(
+        Output("electrochem-kpi-strip", "children"),
+        Output("mechanics-status-strip", "children"),
+        Output("electrochem-graph", "figure"),
+        Input("main-tabs", "value"),
+        Input("active-run-id-store", "data"),
+        Input("chemistry-preset-dropdown", "value"),
+        Input("theme-store", "data"),
+        State("run-history-store", "data"),
+    )
+    def render_electrochem_and_mechanics_tab(
+        active_tab: str,
+        run_id: str | None,
+        chemistry_key: str | None,
+        theme: str | None,
+        history: list[dict[str, Any]] | None,
+    ) -> tuple[list[Any], Any, Any]:
+        if active_tab != "tab-echem":
+            raise PreventUpdate
+        dark = theme == "dark"
+        run = registry.get_or_rehydrate(run_id, history)
+        if run is None:
+            return [], html.Div(), empty_placeholder_figure(dark_mode=dark, height=470)
+
+        s = run.summary
+        tz = s.directional.get("z")
+        d_eff_z = tz.effective_diffusivity if tz else s.porosity
+        l_m = float(s.shape_zyx[0]) * float(s.voxel_size_um_zyx[0]) * 1e-6
+        echem_rep = evaluate_cell_electrochemistry(
+            porosity=s.porosity,
+            d_eff_z=d_eff_z,
+            specific_surface_area_m_inv=(
+                s.interfacial_area_active_m_inv
+                if s.interfacial_area_active_m_inv > 0
+                else 8.0e4
+            ),
+            solid_sigma_eff_z=(
+                s.solid_effective_conductivity_z
+                if s.solid_effective_conductivity_z > 0
+                else 0.05
+            ),
+            thickness_m=l_m,
+            chemistry_key=str(chemistry_key or "nmc811_li_ion"),
+        )
+        ed = echem_rep.to_dict()
+        c_1c = next((c for c in ed["curves"] if abs(c["c_rate"] - 1.0) < 0.1), ed["curves"][0])
+        c_4c = ed["curves"][-1]
+
+        mech = s.mechanics
+        if mech and mech.get("backend") == "sms-fortran":
+            mech_card_val = f"{mech['effective_modulus_gpa']:.3f} GPa"
+            mech_card_sub = (
+                f"E/E₀={mech['relative_stiffness']:.3f} · Peak σ_vM={mech['peak_von_mises_mpa']:.2f} MPa "
+                f"({mech['peak_stress_concentration']:.1f}×)"
+            )
+            mech_banner = html.Div(
+                [
+                    html.Span("SMS Fortran 3D Elasticity", className="pill pill-origin"),
+                    html.Span(
+                        f"Solved on {mech['solve_grid_zyx'][2]}×{mech['solve_grid_zyx'][1]}×{mech['solve_grid_zyx'][0]} "
+                        f"({mech['iterations']} iters) — inspect σ_vM field in Tab 1.",
+                    ),
+                ]
+            )
+        else:
+            mech_card_val = "On-Demand"
+            mech_card_sub = "Check 'Compute 3D SMS Mechanics' in Step 2"
+            mech_banner = html.Div(
+                "Tip: Enable 'Compute 3D SMS Mechanics (E_eff & σ_vM)' in Step 2 to run coupled Fortran 3D linear elasticity.",
+                style={"color": "var(--text-muted)"},
+            )
+
+        kpis = [
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Limiting Current J_lim", className="kpi-label"),
+                    html.Div(f"{ed['limiting_current_ma_cm2']:.1f} mA/cm²", className="kpi-value"),
+                    html.Div(f"Critical rate C_lim = {ed['limiting_c_rate']:.2f}C", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("1C Accessible Capacity", className="kpi-label"),
+                    html.Div(f"{c_1c['accessible_capacity_pct']:.1f}%", className="kpi-value"),
+                    html.Div(f"Energy efficiency {c_1c['specific_energy_pct']:.1f}%", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div(f"{c_4c['c_rate']}C Fast-Charge Capacity", className="kpi-label"),
+                    html.Div(f"{c_4c['accessible_capacity_pct']:.1f}%", className="kpi-value"),
+                    html.Div(f"Salt-depletion η_conc = {c_4c['eta_concentration_mv']:.0f} mV", className="kpi-sub"),
+                ],
+            ),
+            html.Div(
+                className="kpi-card",
+                children=[
+                    html.Div("Axial Stiffness E_eff (SMS)", className="kpi-label"),
+                    html.Div(mech_card_val, className="kpi-value"),
+                    html.Div(mech_card_sub, className="kpi-sub"),
+                ],
+            ),
+        ]
+        return kpis, mech_banner, build_electrochem_figure(ed, dark_mode=dark)
 
     @app.callback(
         Output("compare-left-dropdown", "options"),
@@ -910,8 +1450,12 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             return opts, opts, no_update, no_update, no_update
 
         dark = theme == "dark"
-        r_left = registry.get(left_id) or (registry.get(opts[0]["value"]) if opts else None)
-        r_right = registry.get(right_id) or (registry.get(opts[-1]["value"]) if opts else None)
+        r_left = registry.get_or_rehydrate(left_id, history) or (
+            registry.get_or_rehydrate(opts[0]["value"], history) if opts else None
+        )
+        r_right = registry.get_or_rehydrate(right_id, history) or (
+            registry.get_or_rehydrate(opts[-1]["value"], history) if opts else None
+        )
         if r_left is None or r_right is None:
             emp = empty_placeholder_figure(dark_mode=dark)
             return opts, opts, emp, emp, html.Div()
@@ -946,6 +1490,8 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         sl, sr = r_left.summary, r_right.summary
         tz_l = sl.directional["z"].tortuosity if "z" in sl.directional else None
         tz_r = sr.directional["z"].tortuosity if "z" in sr.directional else None
+        cl_l = (sl.electrochem or {}).get("limiting_c_rate")
+        cl_r = (sr.electrochem or {}).get("limiting_c_rate")
         delta_tbl = html.Table(
             className="roi-table",
             children=[
@@ -979,11 +1525,13 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                         ),
                         html.Tr(
                             [
-                                html.Td("Solid Z-Conductivity σ_eff,Z"),
-                                html.Td(f"{sl.solid_effective_conductivity_z:.4f}"),
-                                html.Td(f"{sr.solid_effective_conductivity_z:.4f}"),
+                                html.Td("Limiting C-Rate C_lim"),
+                                html.Td(f"{cl_l:.2f}C" if cl_l is not None else "—"),
+                                html.Td(f"{cl_r:.2f}C" if cl_r is not None else "—"),
                                 html.Td(
-                                    f"{sr.solid_effective_conductivity_z - sl.solid_effective_conductivity_z:+.4f}"
+                                    f"{cl_r - cl_l:+.2f}C"
+                                    if (cl_l is not None and cl_r is not None)
+                                    else "—"
                                 ),
                             ]
                         ),
@@ -1025,7 +1573,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         theme: str | None,
     ) -> tuple[Any, ...]:
         dark = theme == "dark"
-        run = registry.get(run_id)
+        run = registry.get_or_rehydrate(run_id, history)
         active_kind = run.summary.source_kind if run else None
 
         wi = float(w_ion if w_ion is not None else 0.58)
@@ -1048,7 +1596,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                 children=[
                     html.Span("Bayesian Active Planner", className="pill pill-origin"),
                     html.Strong(
-                        f"Next Recommended Setpoint: {sug.suggested_value:.1f} {sug.parameter_unit}".strip(),
+                        f"Next Recommended Setpoint: {sug.suggested_value:.2f} {sug.parameter_unit}".strip(),
                         style={"fontSize": "14.5px"},
                     ),
                     html.Div(
@@ -1064,7 +1612,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             next_kpa = sug.suggested_value if sug.parameter_unit == "kPa" else 200.0
         else:
             gp_fig = empty_placeholder_figure(
-                "Run 2+ compression (or porosity) states of the same family to fit the GP surrogate.",
+                "Click '⚡ Run 5-Point Campaign Sweep' or evaluate 2+ states to fit the GP surrogate.",
                 dark_mode=dark,
             )
             rec_banner = html.Div(
@@ -1115,11 +1663,12 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             live_r = _recompute_entry_r_cell(
                 h, w_ion=wi, w_elec=we, w_kin=wk, sigma_over_kappa_bulk=sk
             )
-            param_str = (
-                f"{h['clamping_kpa']:.0f} kPa"
-                if h.get("source_kind") in ("carbon_felt", "porousdiff_gallery")
-                else f"ε={h['porosity']:.2f}"
-            )
+            if h.get("source_kind") in ("carbon_felt", "porousdiff_gallery"):
+                param_str = f"{h['clamping_kpa']:.0f} kPa"
+            elif float(h.get("virtual_compression_strain", 0.0)) > 0:
+                param_str = f"ε_z={float(h['virtual_compression_strain']):.0%}"
+            else:
+                param_str = f"ε={h['porosity']:.2f}"
             hist_rows.append(
                 html.Tr(
                     [
@@ -1207,3 +1756,18 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         content = json.dumps(run.summary.bpx_parameters, indent=2)
         fname = f"openimpala_bpx_{run.summary.run_id}.json"
         return dcc.send_string(content, filename=fname)
+
+    @app.callback(
+        Output("download-campaign", "data"),
+        Input("export-campaign-btn", "n_clicks"),
+        State("run-history-store", "data"),
+        prevent_initial_call=True,
+    )
+    def download_campaign_json(
+        n_clicks: int,
+        history: list[dict[str, Any]] | None,
+    ) -> Any:
+        if not n_clicks or not history:
+            raise PreventUpdate
+        content = serialize_campaign_json(history)
+        return dcc.send_string(content, filename="openimpala_hub_campaign.json")

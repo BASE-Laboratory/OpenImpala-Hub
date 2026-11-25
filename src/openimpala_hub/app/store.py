@@ -53,18 +53,25 @@ class RunRegistry:
     ) -> ExecutedRun | None:
         """Fetch `run_id` from memory, or re-execute from `history` specs if evicted from LRU."""
         existing = self.get(run_id)
-        if existing is not None or not run_id or not history:
+        if existing is not None:
             return existing
-        from ..contracts import MicrostructureSpec, SolveSpec
+        if run_id and history:
+            from ..contracts import MicrostructureSpec, SolveSpec
 
-        for item in history:
-            if item.get("run_id") == run_id and item.get("microstructure_spec"):
-                mspec = MicrostructureSpec.from_dict(item["microstructure_spec"])
-                sspec = SolveSpec.from_dict(item.get("solve_spec") or {})
-                rebuilt = run_transport_pipeline(mspec, sspec)
-                self.put(rebuilt)
-                return rebuilt
-        return None
+            for item in history:
+                if item.get("run_id") == run_id and item.get("microstructure_spec"):
+                    try:
+                        mspec = MicrostructureSpec.from_dict(item["microstructure_spec"])
+                        sspec = SolveSpec.from_dict(item.get("solve_spec") or {})
+                        rebuilt = run_transport_pipeline(mspec, sspec)
+                        self.put(rebuilt)
+                        with self._lock:
+                            self._runs[run_id] = rebuilt
+                            self._runs.move_to_end(run_id)
+                        return rebuilt
+                    except Exception:
+                        break
+        return self.get(self.default_run_id)
 
     def list_summaries(self) -> list[dict]:
         with self._lock:
