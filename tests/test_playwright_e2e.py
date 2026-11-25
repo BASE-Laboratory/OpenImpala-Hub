@@ -21,6 +21,8 @@ def _free_port() -> int:
 
 def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
     playwright = pytest.importorskip("playwright.sync_api")
+    import numpy as np
+    from basecoat import Volume, write_volume
 
     dash_app = create_dash_app(warm_start=True, warm_shape=(28, 28, 28))
     port = _free_port()
@@ -37,10 +39,21 @@ def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
 
             context = browser.new_context(accept_downloads=True)
             page = context.new_page()
+            js_errors: list[str] = []
+            page.on("pageerror", lambda err: js_errors.append(str(err)))
+
             page.goto(f"http://127.0.0.1:{port}/", wait_until="networkidle")
             page.wait_for_selector("#kpi-cards-row .kpi-card", timeout=15000)
 
-            # Switch to analytical cube preset and assert exact 1.0000 porosity & 1.000 tortuosity in DOM
+            # 1. Switch to Preset #2 (3-Phase Cathode) and verify Positive electrode role in readout
+            page.locator("#preset-btn-cathode").click()
+            page.wait_for_function(
+                "() => document.querySelector('#pybamm-bpx-preview')?.textContent.includes('Positive electrode porosity')",
+                timeout=30000,
+            )
+            assert "role: positive" in page.locator("#preset-context-banner").inner_text()
+
+            # 2. Switch to analytical cube preset and assert exact 1.0000 porosity & 1.000 tortuosity in DOM
             page.locator("#preset-btn-cube").click()
             page.wait_for_function(
                 "() => document.querySelector('#kpi-cards-row')?.innerText.includes('1.0000')",
@@ -50,8 +63,34 @@ def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
             assert "1.0000" in kpi_text
             assert "1.000" in kpi_text
 
-            # Trigger real browser download of the NIA report bundle
-            with page.expect_download(timeout=20000) as dl_info:
+            # 3. Open Digital Twin tab and test 1-click Jump to ROI #1
+            page.get_by_text("Autonomous Planner (Digital Twin)").click()
+            page.wait_for_selector("#jump-roi-btn", timeout=10000)
+            page.locator("#jump-roi-btn").click()
+            page.wait_for_selector("#slice-heatmap-graph", state="visible", timeout=10000)
+
+            # 4. Upload a real greyscale .tif stack through the browser file input & solve
+            rng = np.random.default_rng(3)
+            grey = np.where(rng.random((20, 20, 20)) < 0.70, 30, 210).astype(np.uint8)
+            sample_tif = tmp_path / "browser_xct.tif"
+            write_volume(Volume.from_array(grey, voxel_size_um=None), sample_tif)
+
+            page.locator("#source-kind-dropdown").click()
+            page.get_by_text("Upload Experimental Volume").click()
+            page.wait_for_selector("#upload-volume-box input[type='file']", state="attached", timeout=10000)
+            page.locator("#upload-volume-box input[type='file']").set_input_files(str(sample_tif))
+            page.wait_for_function(
+                "() => document.querySelector('#upload-status-text')?.innerText.includes('browser_xct.tif')",
+                timeout=15000,
+            )
+            page.locator("#run-pipeline-btn").click()
+            page.wait_for_function(
+                "() => document.querySelector('#preset-context-banner')?.innerText.includes('origin: user_upload')",
+                timeout=20000,
+            )
+
+            # 5. Trigger real browser download of the NIA report bundle
+            with page.expect_download(timeout=25000) as dl_info:
                 page.locator("#export-bundle-btn").click()
             dl_file = tmp_path / dl_info.value.suggested_filename
             dl_info.value.save_as(str(dl_file))
@@ -60,6 +99,7 @@ def test_browser_happy_path_preset_and_zip_download(tmp_path: Path) -> None:
                     set(zf.namelist())
                 )
 
+            assert js_errors == [], f"Unexpected browser JS errors: {js_errors}"
             context.close()
             browser.close()
     finally:

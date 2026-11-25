@@ -1,39 +1,99 @@
-"""Declarative Dash layout for The OpenImpala Hub."""
+"""Declarative Dash layout for The OpenImpala Hub (`v0.2`)."""
 
 from __future__ import annotations
 
 from dash import dcc, html
 
+from ..engine.generators import list_porousdiff_gallery
 from .store import RunRegistry
 
 
-def _initial_history_records(registry: RunRegistry) -> list[dict]:
+def history_entry_from_summary(s) -> dict:
+    """Build a compact JSON-serializable campaign history dict preserving live regime ingredients."""
+    tz = s.directional.get("z")
+    mspec = s.microstructure_spec or {}
+    strain = float(mspec.get("compression_strain", 0.0))
+    thickness_ratio = (
+        max(0.35, 1.0 - strain)
+        if s.source_kind in ("carbon_felt", "porousdiff_gallery")
+        else 1.0
+    )
+    return {
+        "run_id": s.run_id,
+        "label": s.label,
+        "clamping_kpa": float(mspec.get("clamping_kpa", 150.0)),
+        "porosity": s.porosity,
+        "tau_z": tz.tortuosity if tz else None,
+        "d_eff_z": tz.effective_diffusivity if tz else s.porosity,
+        "sigma_z": s.solid_effective_conductivity_z,
+        "active_ssa": s.interfacial_area_active_m_inv,
+        "thickness_ratio": round(thickness_ratio, 4),
+        "r_cell": s.cell_resistance_fom,
+        "source_kind": s.source_kind,
+        "microstructure_spec": mspec,
+        "solve_spec": s.solve_spec,
+    }
+
+
+def initial_history_records(registry: RunRegistry) -> list[dict]:
     records: list[dict] = []
     for rid in registry.boot_run_ids:
         run = registry.get(rid)
         if run is None:
             continue
-        s = run.summary
-        tz = s.directional.get("z")
-        records.append(
-            {
-                "run_id": rid,
-                "label": s.label,
-                "clamping_kpa": float(s.microstructure_spec.get("clamping_kpa", 150.0)),
-                "porosity": s.porosity,
-                "tau_z": tz.tortuosity if tz else None,
-                "d_eff_z": tz.effective_diffusivity if tz else 0.0,
-                "sigma_z": s.solid_effective_conductivity_z,
-                "r_cell": s.cell_resistance_fom,
-                "source_kind": s.source_kind,
-            }
-        )
+        records.append(history_entry_from_summary(run.summary))
     return records
+
+
+def _source_dropdown_options() -> list[dict]:
+    gallery = list_porousdiff_gallery()
+    if gallery:
+        pd_opt = {
+            "label": f"PorousDiff 3D Diffusion Gallery ({len(gallery)} .ome.zarr staged)",
+            "value": "porousdiff_gallery",
+        }
+    else:
+        pd_opt = {
+            "label": "PorousDiff 3D Diffusion (0 staged — drop .ome.zarr in data/porousdiff)",
+            "value": "porousdiff_gallery",
+            "disabled": True,
+        }
+    return [
+        {
+            "label": "Anisotropic Carbon Felt (Fibrous + Coating)",
+            "value": "carbon_felt",
+        },
+        {
+            "label": "3-Phase Composite Cathode (NMC + CBD)",
+            "value": "multiphase_electrode",
+        },
+        {
+            "label": "Anisotropic Gaussian Random Blobs",
+            "value": "gaussian_blobs",
+        },
+        {
+            "label": "Overlapping Sphere Packing",
+            "value": "overlapping_spheres",
+        },
+        {
+            "label": "Benchmark XCT / Sphere Pack (openimpala.datasets)",
+            "value": "benchmark_dataset",
+        },
+        {
+            "label": "Analytical Open Cube (τ = 1.000 Verification)",
+            "value": "open_cube",
+        },
+        pd_opt,
+        {
+            "label": "Upload Experimental Volume (.tif, .npy, .h5, .ome.zarr.zip)",
+            "value": "user_upload",
+        },
+    ]
 
 
 def build_hub_layout(registry: RunRegistry) -> html.Div:
     """Construct the root Dash component tree seeded with warm-start run IDs."""
-    init_history = _initial_history_records(registry)
+    init_history = initial_history_records(registry)
     default_id = registry.default_run_id or (init_history[0]["run_id"] if init_history else None)
     cmp_left_id = init_history[0]["run_id"] if init_history else default_id
     cmp_right_id = init_history[-1]["run_id"] if len(init_history) > 1 else default_id
@@ -131,7 +191,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
             html.Div(
                 className="hub-body",
                 children=[
-                    # Left Sidebar: Step 1 (Source) + Step 2 (Physics Solver)
+                    # Left Sidebar: Step 1 (Source & Segmentation) + Step 2 (Physics Solver)
                     html.Aside(
                         className="hub-sidebar",
                         children=[
@@ -143,43 +203,11 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         id="source-kind-dropdown",
                                         clearable=False,
                                         value="carbon_felt",
-                                        options=[
-                                            {
-                                                "label": "Anisotropic Carbon Felt (Fibrous + Coating)",
-                                                "value": "carbon_felt",
-                                            },
-                                            {
-                                                "label": "3-Phase Composite Cathode (NMC + CBD)",
-                                                "value": "multiphase_electrode",
-                                            },
-                                            {
-                                                "label": "Anisotropic Gaussian Random Blobs",
-                                                "value": "gaussian_blobs",
-                                            },
-                                            {
-                                                "label": "Overlapping Sphere Packing",
-                                                "value": "overlapping_spheres",
-                                            },
-                                            {
-                                                "label": "Benchmark XCT / Sphere Pack (openimpala.datasets)",
-                                                "value": "benchmark_dataset",
-                                            },
-                                            {
-                                                "label": "Analytical Open Cube (τ = 1.000 Verification)",
-                                                "value": "open_cube",
-                                            },
-                                            {
-                                                "label": "PorousDiff 3D Diffusion Gallery (.ome.zarr)",
-                                                "value": "porousdiff_gallery",
-                                            },
-                                            {
-                                                "label": "Upload Volume (.tif, .npy, .h5)",
-                                                "value": "user_upload",
-                                            },
-                                        ],
+                                        options=_source_dropdown_options(),
                                     ),
                                 ]
                             ),
+                            # Experimental Upload & Pre-Solve Segmentation Drawer
                             html.Div(
                                 id="upload-container",
                                 style={"display": "none"},
@@ -188,7 +216,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         id="upload-volume-box",
                                         className="upload-box",
                                         children=html.Div(
-                                            ["Drag & drop or ", html.B("select .tif / .npy / .h5")]
+                                            [
+                                                "Drag & drop or ",
+                                                html.B("select .tif / .npy / .h5 / .ome.zarr.zip"),
+                                            ]
                                         ),
                                         multiple=False,
                                     ),
@@ -196,20 +227,132 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         id="upload-status-text",
                                         style={"fontSize": "11.5px", "marginTop": "4px"},
                                     ),
+                                    html.Div(
+                                        id="upload-seg-drawer",
+                                        className="upload-drawer",
+                                        style={"display": "none"},
+                                        children=[
+                                            html.Div(
+                                                children=[
+                                                    html.Label(
+                                                        "Segmentation Mode",
+                                                        className="field-label",
+                                                    ),
+                                                    dcc.Dropdown(
+                                                        id="upload-seg-mode-dropdown",
+                                                        clearable=False,
+                                                        value="otsu",
+                                                        options=[
+                                                            {
+                                                                "label": "Otsu Automatic Threshold",
+                                                                "value": "otsu",
+                                                            },
+                                                            {
+                                                                "label": "Manual Threshold",
+                                                                "value": "manual",
+                                                            },
+                                                            {
+                                                                "label": "Already Integer Phase IDs",
+                                                                "value": "labels",
+                                                            },
+                                                        ],
+                                                    ),
+                                                ]
+                                            ),
+                                            html.Div(
+                                                id="upload-manual-threshold-block",
+                                                style={"display": "none"},
+                                                children=[
+                                                    html.Label(
+                                                        "Threshold Value",
+                                                        className="field-label",
+                                                    ),
+                                                    dcc.Input(
+                                                        id="upload-threshold-input",
+                                                        type="number",
+                                                        value=0.5,
+                                                        step="any",
+                                                        className="num-input",
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                children=[
+                                                    html.Label(
+                                                        "Contrast Polarity",
+                                                        className="field-label",
+                                                    ),
+                                                    dcc.RadioItems(
+                                                        id="upload-polarity-radio",
+                                                        options=[
+                                                            {
+                                                                "label": " Dark = Pore (0)",
+                                                                "value": "dark",
+                                                            },
+                                                            {
+                                                                "label": " Bright = Pore (0)",
+                                                                "value": "bright",
+                                                            },
+                                                        ],
+                                                        value="dark",
+                                                        inline=True,
+                                                        style={"fontSize": "12px"},
+                                                    ),
+                                                ]
+                                            ),
+                                            html.Div(
+                                                children=[
+                                                    html.Label(
+                                                        "Large-Volume Cap Policy (>128³)",
+                                                        className="field-label",
+                                                    ),
+                                                    dcc.Dropdown(
+                                                        id="upload-coarsen-dropdown",
+                                                        clearable=False,
+                                                        value="crop_center",
+                                                        options=[
+                                                            {
+                                                                "label": "Centre ROI Crop (preserve dx)",
+                                                                "value": "crop_center",
+                                                            },
+                                                            {
+                                                                "label": "Majority-Mode Coarsen (full FoV)",
+                                                                "value": "mode_downsample",
+                                                            },
+                                                        ],
+                                                    ),
+                                                ]
+                                            ),
+                                            dcc.Graph(
+                                                id="upload-preview-graph",
+                                                config={"displayModeBar": False},
+                                            ),
+                                        ],
+                                    ),
                                 ],
                             ),
                             html.Div(
+                                id="grid-side-block",
                                 children=[
-                                    html.Label("Cubic Grid Resolution (N³)", className="field-label"),
+                                    html.Label(
+                                        "Cubic Grid Resolution (N³)",
+                                        className="field-label",
+                                    ),
                                     dcc.Slider(
                                         id="grid-side-slider",
                                         min=32,
                                         max=96,
                                         step=16,
                                         value=48,
-                                        marks={32: "32³", 48: "48³", 64: "64³", 80: "80³", 96: "96³"},
+                                        marks={
+                                            32: "32³",
+                                            48: "48³",
+                                            64: "64³",
+                                            80: "80³",
+                                            96: "96³",
+                                        },
                                     ),
-                                ]
+                                ],
                             ),
                             html.Div(
                                 children=[
@@ -221,10 +364,77 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         id="voxel-size-input",
                                         type="number",
                                         value=1.6,
-                                        min=0.05,
-                                        max=100.0,
+                                        min=0.005,
+                                        max=500.0,
                                         step="any",
                                         className="num-input",
+                                    ),
+                                    html.Details(
+                                        id="aniso-spacing-details",
+                                        style={"marginTop": "5px"},
+                                        children=[
+                                            html.Summary(
+                                                "Anisotropic Spacing (dz, dy, dx) [µm]",
+                                                style={
+                                                    "fontSize": "11.5px",
+                                                    "cursor": "pointer",
+                                                    "color": "var(--text-muted)",
+                                                },
+                                            ),
+                                            html.Div(
+                                                className="three-col-inputs",
+                                                children=[
+                                                    html.Div(
+                                                        [
+                                                            html.Span(
+                                                                "dz [µm]",
+                                                                style={"fontSize": "11px"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="voxel-dz-input",
+                                                                type="number",
+                                                                value=1.6,
+                                                                min=0.005,
+                                                                step="any",
+                                                                className="num-input",
+                                                            ),
+                                                        ]
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            html.Span(
+                                                                "dy [µm]",
+                                                                style={"fontSize": "11px"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="voxel-dy-input",
+                                                                type="number",
+                                                                value=1.6,
+                                                                min=0.005,
+                                                                step="any",
+                                                                className="num-input",
+                                                            ),
+                                                        ]
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            html.Span(
+                                                                "dx [µm]",
+                                                                style={"fontSize": "11px"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="voxel-dx-input",
+                                                                type="number",
+                                                                value=1.6,
+                                                                min=0.005,
+                                                                step="any",
+                                                                className="num-input",
+                                                            ),
+                                                        ]
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
                                     ),
                                 ]
                             ),
@@ -249,7 +459,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                             html.Div(
                                 id="porosity-control-block",
                                 children=[
-                                    html.Label("Target / Base Porosity ε [-]", className="field-label"),
+                                    html.Label(
+                                        "Target / Base Porosity ε [-]",
+                                        className="field-label",
+                                    ),
                                     dcc.Slider(
                                         id="porosity-slider",
                                         min=0.20,
@@ -262,8 +475,12 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                 ],
                             ),
                             html.Div(
+                                id="seed-control-block",
                                 children=[
-                                    html.Label("Deterministic Random Seed", className="field-label"),
+                                    html.Label(
+                                        "Deterministic Random Seed",
+                                        className="field-label",
+                                    ),
                                     dcc.Input(
                                         id="seed-input",
                                         type="number",
@@ -272,10 +489,57 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         step=1,
                                         className="num-input",
                                     ),
-                                ]
+                                ],
                             ),
                             html.Hr(style={"width": "100%", "borderColor": "var(--border-color)"}),
                             html.Div("Step 2 · OpenImpala Physics", className="sidebar-heading"),
+                            html.Div(
+                                children=[
+                                    html.Label("Conducting Phase ID", className="field-label"),
+                                    dcc.Dropdown(
+                                        id="conducting-phase-dropdown",
+                                        clearable=False,
+                                        value=0,
+                                        options=[
+                                            {
+                                                "label": "Phase 0: Pore / Electrolyte",
+                                                "value": 0,
+                                            },
+                                            {
+                                                "label": "Phase 1: Solid Matrix / Backbone",
+                                                "value": 1,
+                                            },
+                                        ],
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                children=[
+                                    html.Label(
+                                        "Cell Role (PyBaMM / Faraday BPX)",
+                                        className="field-label",
+                                    ),
+                                    dcc.Dropdown(
+                                        id="electrode-role-dropdown",
+                                        clearable=False,
+                                        value="negative",
+                                        options=[
+                                            {
+                                                "label": "Negative Electrode (Anode / Felt)",
+                                                "value": "negative",
+                                            },
+                                            {
+                                                "label": "Positive Electrode (Cathode)",
+                                                "value": "positive",
+                                            },
+                                            {
+                                                "label": "Porous Separator",
+                                                "value": "separator",
+                                            },
+                                        ],
+                                    ),
+                                ]
+                            ),
                             html.Div(
                                 children=[
                                     html.Label("Linear Solver Backend", className="field-label"),
@@ -306,10 +570,19 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                     {
                                         "label": " Compute 3×3 Periodic D_eff Tensor",
                                         "value": "homog",
-                                    }
+                                    },
+                                    {
+                                        "label": " Compute Subvolume REV Curve (oi.rev_study)",
+                                        "value": "rev",
+                                    },
                                 ],
                                 value=[],
-                                style={"fontSize": "12.5px"},
+                                style={
+                                    "fontSize": "12.5px",
+                                    "display": "flex",
+                                    "flexDirection": "column",
+                                    "gap": "4px",
+                                },
                             ),
                             dcc.Loading(
                                 type="circle",
@@ -357,9 +630,18 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                     dcc.RadioItems(
                                                                         id="slice-plane-radio",
                                                                         options=[
-                                                                            {"label": " XZ (Flow)", "value": "xz"},
-                                                                            {"label": " XY (In-Plane)", "value": "xy"},
-                                                                            {"label": " YZ (Cross)", "value": "yz"},
+                                                                            {
+                                                                                "label": " XZ (Flow)",
+                                                                                "value": "xz",
+                                                                            },
+                                                                            {
+                                                                                "label": " XY (In-Plane)",
+                                                                                "value": "xy",
+                                                                            },
+                                                                            {
+                                                                                "label": " YZ (Cross)",
+                                                                                "value": "yz",
+                                                                            },
                                                                         ],
                                                                         value="xz",
                                                                         inline=True,
@@ -396,7 +678,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                 ]
                                                             ),
                                                             html.Div(
-                                                                style={"flex": "1", "minWidth": "200px"},
+                                                                style={
+                                                                    "flex": "1",
+                                                                    "minWidth": "200px",
+                                                                },
                                                                 children=[
                                                                     html.Span(
                                                                         "Slice Index",
@@ -422,7 +707,9 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                         className="two-col-charts",
                                                         children=[
                                                             dcc.Graph(id="slice-heatmap-graph"),
-                                                            dcc.Graph(id="directional-profile-graph"),
+                                                            dcc.Graph(
+                                                                id="directional-profile-graph"
+                                                            ),
                                                         ],
                                                     ),
                                                     html.Details(
@@ -430,9 +717,16 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                         children=[
                                                             html.Summary(
                                                                 "Continuum PyBaMM Parameters & Homogenised Tensor Readout",
-                                                                style={"cursor": "pointer", "fontWeight": "600", "fontSize": "13px"},
+                                                                style={
+                                                                    "cursor": "pointer",
+                                                                    "fontWeight": "600",
+                                                                    "fontSize": "13px",
+                                                                },
                                                             ),
-                                                            html.Pre(id="pybamm-bpx-preview", className="code-preview"),
+                                                            html.Pre(
+                                                                id="pybamm-bpx-preview",
+                                                                className="code-preview",
+                                                            ),
                                                         ],
                                                     ),
                                                 ],
@@ -469,14 +763,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             html.Div(
                                                                 style={"minWidth": "150px"},
                                                                 children=[
-                                                                    html.Span("Surface Opacity", className="field-label"),
+                                                                    html.Span(
+                                                                        "Surface Opacity",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.Slider(
                                                                         id="opacity-3d-slider",
                                                                         min=0.25,
                                                                         max=1.0,
                                                                         step=0.05,
                                                                         value=0.90,
-                                                                        marks={0.3: "0.3", 0.65: "0.65", 1.0: "1.0"},
+                                                                        marks={
+                                                                            0.3: "0.3",
+                                                                            0.65: "0.65",
+                                                                            1.0: "1.0",
+                                                                        },
                                                                         updatemode="mouseup",
                                                                     ),
                                                                 ],
@@ -484,14 +785,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             html.Div(
                                                                 style={"minWidth": "170px"},
                                                                 children=[
-                                                                    html.Span("Z Cutaway [%]", className="field-label"),
+                                                                    html.Span(
+                                                                        "Z Cutaway [%]",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.RangeSlider(
                                                                         id="clip-z-slider",
                                                                         min=0,
                                                                         max=100,
                                                                         step=5,
                                                                         value=[0, 100],
-                                                                        marks={0: "0%", 50: "50%", 100: "100%"},
+                                                                        marks={
+                                                                            0: "0%",
+                                                                            50: "50%",
+                                                                            100: "100%",
+                                                                        },
                                                                         updatemode="mouseup",
                                                                     ),
                                                                 ],
@@ -499,14 +807,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             html.Div(
                                                                 style={"minWidth": "170px"},
                                                                 children=[
-                                                                    html.Span("X Cutaway [%]", className="field-label"),
+                                                                    html.Span(
+                                                                        "X Cutaway [%]",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.RangeSlider(
                                                                         id="clip-x-slider",
                                                                         min=0,
                                                                         max=100,
                                                                         step=5,
                                                                         value=[0, 100],
-                                                                        marks={0: "0%", 50: "50%", 100: "100%"},
+                                                                        marks={
+                                                                            0: "0%",
+                                                                            50: "50%",
+                                                                            100: "100%",
+                                                                        },
                                                                         updatemode="mouseup",
                                                                     ),
                                                                 ],
@@ -515,7 +830,9 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                     ),
                                                     dcc.Loading(
                                                         type="default",
-                                                        children=dcc.Graph(id="isosurface-3d-graph"),
+                                                        children=dcc.Graph(
+                                                            id="isosurface-3d-graph"
+                                                        ),
                                                     ),
                                                 ],
                                             )
@@ -535,7 +852,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             html.Div(
                                                                 style={"minWidth": "240px"},
                                                                 children=[
-                                                                    html.Span("Left Run", className="field-label"),
+                                                                    html.Span(
+                                                                        "Left Run",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.Dropdown(
                                                                         id="compare-left-dropdown",
                                                                         clearable=False,
@@ -546,7 +866,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             html.Div(
                                                                 style={"minWidth": "240px"},
                                                                 children=[
-                                                                    html.Span("Right Run", className="field-label"),
+                                                                    html.Span(
+                                                                        "Right Run",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.Dropdown(
                                                                         id="compare-right-dropdown",
                                                                         clearable=False,
@@ -556,12 +879,21 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             ),
                                                             html.Div(
                                                                 children=[
-                                                                    html.Span("Field", className="field-label"),
+                                                                    html.Span(
+                                                                        "Field",
+                                                                        className="field-label",
+                                                                    ),
                                                                     dcc.RadioItems(
                                                                         id="compare-layer-radio",
                                                                         options=[
-                                                                            {"label": " Flux |J/J0|", "value": "flux"},
-                                                                            {"label": " Phase", "value": "phase"},
+                                                                            {
+                                                                                "label": " Flux |J/J0|",
+                                                                                "value": "flux",
+                                                                            },
+                                                                            {
+                                                                                "label": " Phase",
+                                                                                "value": "phase",
+                                                                            },
                                                                         ],
                                                                         value="flux",
                                                                         inline=True,
@@ -577,7 +909,10 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                             dcc.Graph(id="compare-right-graph"),
                                                         ],
                                                     ),
-                                                    html.Div(id="compare-delta-table", style={"marginTop": "10px"}),
+                                                    html.Div(
+                                                        id="compare-delta-table",
+                                                        style={"marginTop": "10px"},
+                                                    ),
                                                 ],
                                             )
                                         ],
@@ -598,11 +933,134 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                 id="twin-recommendation-banner",
                                                                 style={"flex": "1"},
                                                             ),
-                                                            html.Button(
-                                                                "⚡ Execute Recommended Scan in OpenImpala",
-                                                                id="run-suggested-setpoint-btn",
-                                                                className="btn btn-emerald",
-                                                                n_clicks=0,
+                                                            html.Div(
+                                                                style={
+                                                                    "display": "flex",
+                                                                    "flexWrap": "wrap",
+                                                                    "gap": "8px",
+                                                                },
+                                                                children=[
+                                                                    html.Button(
+                                                                        "⚡ Execute Recommended Scan",
+                                                                        id="run-suggested-setpoint-btn",
+                                                                        className="btn btn-emerald",
+                                                                        n_clicks=0,
+                                                                    ),
+                                                                    html.Button(
+                                                                        "🎯 View ROI #1 in 2D Slice",
+                                                                        id="jump-roi-btn",
+                                                                        className="btn",
+                                                                        n_clicks=0,
+                                                                    ),
+                                                                    html.Button(
+                                                                        "↺ Reset Campaign",
+                                                                        id="reset-campaign-btn",
+                                                                        className="btn",
+                                                                        n_clicks=0,
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    # Interactive Cell Regime Weights (recomputes GP live without PDE re-solve)
+                                                    html.Div(
+                                                        className="regime-grid",
+                                                        children=[
+                                                            html.Div(
+                                                                children=[
+                                                                    html.Span(
+                                                                        "Ionic Mass-Transport Weight w_ion",
+                                                                        className="field-label",
+                                                                    ),
+                                                                    dcc.Slider(
+                                                                        id="twin-w-ion-slider",
+                                                                        min=0.10,
+                                                                        max=1.20,
+                                                                        step=0.05,
+                                                                        value=0.58,
+                                                                        marks={
+                                                                            0.1: "0.1",
+                                                                            0.58: "0.58",
+                                                                            1.2: "1.2",
+                                                                        },
+                                                                        tooltip={
+                                                                            "placement": "bottom",
+                                                                            "always_visible": False,
+                                                                        },
+                                                                    ),
+                                                                ]
+                                                            ),
+                                                            html.Div(
+                                                                children=[
+                                                                    html.Span(
+                                                                        "Electronic Contact Weight w_elec",
+                                                                        className="field-label",
+                                                                    ),
+                                                                    dcc.Slider(
+                                                                        id="twin-w-elec-slider",
+                                                                        min=0.05,
+                                                                        max=1.00,
+                                                                        step=0.05,
+                                                                        value=0.27,
+                                                                        marks={
+                                                                            0.05: "0.05",
+                                                                            0.27: "0.27",
+                                                                            1.0: "1.0",
+                                                                        },
+                                                                        tooltip={
+                                                                            "placement": "bottom",
+                                                                            "always_visible": False,
+                                                                        },
+                                                                    ),
+                                                                ]
+                                                            ),
+                                                            html.Div(
+                                                                children=[
+                                                                    html.Span(
+                                                                        "Interfacial Kinetic Weight w_kin",
+                                                                        className="field-label",
+                                                                    ),
+                                                                    dcc.Slider(
+                                                                        id="twin-w-kin-slider",
+                                                                        min=0.00,
+                                                                        max=0.80,
+                                                                        step=0.05,
+                                                                        value=0.15,
+                                                                        marks={
+                                                                            0.0: "0.0",
+                                                                            0.15: "0.15",
+                                                                            0.8: "0.8",
+                                                                        },
+                                                                        tooltip={
+                                                                            "placement": "bottom",
+                                                                            "always_visible": False,
+                                                                        },
+                                                                    ),
+                                                                ]
+                                                            ),
+                                                            html.Div(
+                                                                children=[
+                                                                    html.Span(
+                                                                        "Bulk Ratio σ_0 / κ_0",
+                                                                        className="field-label",
+                                                                    ),
+                                                                    dcc.Slider(
+                                                                        id="twin-sigma-kappa-slider",
+                                                                        min=2.0,
+                                                                        max=50.0,
+                                                                        step=2.0,
+                                                                        value=16.0,
+                                                                        marks={
+                                                                            2: "2",
+                                                                            16: "16",
+                                                                            50: "50",
+                                                                        },
+                                                                        tooltip={
+                                                                            "placement": "bottom",
+                                                                            "always_visible": False,
+                                                                        },
+                                                                    ),
+                                                                ]
                                                             ),
                                                         ],
                                                     ),
@@ -614,14 +1072,22 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                 children=[
                                                                     html.H4(
                                                                         "Spatial Beamline Trigger · Top 3D Bottleneck ROIs",
-                                                                        style={"marginTop": "0", "fontSize": "14px"},
+                                                                        style={
+                                                                            "marginTop": "0",
+                                                                            "fontSize": "14px",
+                                                                        },
                                                                     ),
                                                                     html.Div(id="zoom-roi-cards"),
                                                                     html.H4(
-                                                                        "Evaluated Compression Campaign History",
-                                                                        style={"marginTop": "18px", "fontSize": "14px"},
+                                                                        "Evaluated Campaign History (Live R_cell)",
+                                                                        style={
+                                                                            "marginTop": "18px",
+                                                                            "fontSize": "14px",
+                                                                        },
                                                                     ),
-                                                                    html.Div(id="sweep-history-table"),
+                                                                    html.Div(
+                                                                        id="sweep-history-table"
+                                                                    ),
                                                                 ]
                                                             ),
                                                         ],

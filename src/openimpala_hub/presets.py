@@ -85,6 +85,7 @@ PRESETS: dict[str, HubPreset] = {
             active_fraction=0.50,
             binder_fraction=0.14,
             sphere_radius_vox=5.5,
+            electrode_role="positive",
             phase_names={
                 0: "pore_electrolyte",
                 1: "active_material",

@@ -217,16 +217,27 @@ def build_directional_and_profile_figure(
     height: int = 460,
     dark_mode: bool = False,
 ) -> go.Figure:
-    """Build a two-row summary chart: directional transport bars + through-thickness porosity profile."""
+    """Build summary chart: directional transport + porosity profile (+ optional REV curve)."""
     tok = _theme_tokens(dark_mode)
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        subplot_titles=(
+    has_rev = bool(run.summary.rev_sizes_vox and run.summary.rev_deff_mean)
+    n_rows = 3 if has_rev else 2
+    titles: tuple[str, ...] = (
+        (
             "Directional Tortuosity & Effective Diffusivity",
             "Through-Thickness Slice Porosity Profile",
-        ),
-        vertical_spacing=0.18,
+            "Subvolume REV Convergence (D_eff ± 1σ vs Box Size)",
+        )
+        if has_rev
+        else (
+            "Directional Tortuosity & Effective Diffusivity",
+            "Through-Thickness Slice Porosity Profile",
+        )
+    )
+    fig = make_subplots(
+        rows=n_rows,
+        cols=1,
+        subplot_titles=titles,
+        vertical_spacing=0.14 if has_rev else 0.18,
     )
 
     dirs = list(run.summary.directional.keys())
@@ -283,19 +294,144 @@ def build_directional_and_profile_figure(
         col=1,
     )
 
+    if has_rev and run.summary.rev_sizes_vox and run.summary.rev_deff_mean:
+        stds = run.summary.rev_deff_std or [0.0] * len(run.summary.rev_sizes_vox)
+        fig.add_trace(
+            go.Scatter(
+                x=run.summary.rev_sizes_vox,
+                y=run.summary.rev_deff_mean,
+                error_y={"type": "data", "array": stds, "visible": True},
+                mode="lines+markers",
+                name="Subvolume D_eff ± 1σ",
+                line={"color": "#8b5cf6", "width": 2.2},
+                marker={"size": 8},
+            ),
+            row=3,
+            col=1,
+        )
+        fig.update_xaxes(title_text="Subvolume Box Edge L [voxels]", row=3, col=1)
+        fig.update_yaxes(title_text="D_eff / D_0 [-]", row=3, col=1)
+
     fig.update_layout(
-        height=height,
+        height=560 if has_rev else height,
         barmode="group",
         paper_bgcolor=tok["paper_bg"],
         plot_bgcolor=tok["plot_bg"],
         font={"color": tok["fg"]},
         margin={"l": 52, "r": 24, "t": 44, "b": 44},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.06, "x": 0.0},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.05, "x": 0.0},
     )
     fig.update_xaxes(gridcolor=tok["grid"])
     fig.update_yaxes(gridcolor=tok["grid"])
     fig.update_xaxes(title_text="Coordinate along flow axis [µm]", row=2, col=1)
     fig.update_yaxes(title_text="Porosity [-]", row=2, col=1)
+    return fig
+
+
+def build_upload_segmentation_preview_figure(
+    inspection: dict[str, object],
+    *,
+    seg_mode: str = "otsu",
+    manual_threshold: float | None = None,
+    dark_is_pore: bool = True,
+    height: int = 305,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Build a compact pre-solve Raw Slice + Binary Mask + Histogram preview for uploaded data."""
+    tok = _theme_tokens(dark_mode)
+    raw_slice = np.asarray(inspection.get("mid_slice_xz") or [[0.0]], dtype=np.float32)
+    edges = np.asarray(inspection.get("hist_bin_edges") or [0.0, 1.0], dtype=np.float64)
+    counts = np.asarray(inspection.get("hist_counts") or [1], dtype=np.float64)
+    otsu_val = float(inspection.get("otsu_threshold", 0.5))  # type: ignore[arg-type]
+
+    mode = str(seg_mode or "otsu").lower()
+    thr_used: float | None
+    if mode == "labels":
+        mask_slice = np.round(raw_slice).astype(np.int32)
+        pore_est = float(np.mean(mask_slice == 0))
+        thr_used = None
+        mask_title = f"Phase IDs (ε0={pore_est:.2f})"
+    else:
+        thr_used = otsu_val if (mode == "otsu" or manual_threshold is None) else float(manual_threshold)
+        if dark_is_pore:
+            mask_slice = np.where(raw_slice <= thr_used, 0, 1).astype(np.int32)
+        else:
+            mask_slice = np.where(raw_slice > thr_used, 0, 1).astype(np.int32)
+        pore_est = float(np.mean(mask_slice == 0))
+        mask_title = f"Mask (ε={pore_est:.2f})"
+
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        specs=[[{"type": "heatmap"}, {"type": "heatmap"}], [{"colspan": 2}, None]],
+        row_heights=[0.62, 0.38],
+        horizontal_spacing=0.08,
+        vertical_spacing=0.22,
+        subplot_titles=("Raw Mid-XZ Slice", mask_title, "Intensity Histogram & Threshold"),
+    )
+
+    fig.add_trace(
+        go.Heatmap(
+            z=raw_slice,
+            colorscale="Gray",
+            showscale=False,
+            hovertemplate="Raw intensity: %{z:.4g}<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Heatmap(
+            z=mask_slice,
+            colorscale=[[0.0, "#0f172a"], [1.0, "#38bdf8"]],
+            zmin=0,
+            zmax=max(1, int(np.max(mask_slice))),
+            showscale=False,
+            hovertemplate="Phase ID: %{z} (0=pore)<extra></extra>",
+        ),
+        row=1,
+        col=2,
+    )
+
+    centres = 0.5 * (edges[:-1] + edges[1:]) if edges.size >= 2 else np.array([0.0])
+    fig.add_trace(
+        go.Bar(
+            x=centres.tolist(),
+            y=counts.tolist(),
+            marker_color=tok["accent"],
+            opacity=0.82,
+            showlegend=False,
+            hovertemplate="Intensity: %{x:.4g}<br>Count: %{y}<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
+    if thr_used is not None:
+        fig.add_vline(
+            x=thr_used,
+            line_dash="dash",
+            line_color="#ef4444",
+            line_width=2.0,
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 10},
+        margin={"l": 26, "r": 14, "t": 28, "b": 24},
+        showlegend=False,
+    )
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_yaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, row=1, col=2)
+    fig.update_yaxes(showticklabels=False, row=1, col=2)
+    fig.update_xaxes(gridcolor=tok["grid"], row=2, col=1)
+    fig.update_yaxes(showticklabels=False, gridcolor=tok["grid"], row=2, col=1)
+    for ann in fig.layout.annotations:
+        ann.font.size = 11
     return fig
 
 
