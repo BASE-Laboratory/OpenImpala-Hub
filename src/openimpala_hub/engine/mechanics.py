@@ -72,7 +72,29 @@ def run_optional_mechanics(
 ) -> tuple[MechanicsSummary | None, np.ndarray | None]:
     """Execute `sms.effective_modulus` if installed, returning `(MechanicsSummary, vm_mpa_zyx)`."""
     if not has_sms_backend():
-        return None, None
+        return (
+            MechanicsSummary(
+                backend="sms-not-installed",
+                sms_version="none",
+                direction=direction,
+                solve_grid_zyx=phase_vol.shape,
+                bulk_youngs_modulus_gpa=round(float(bulk_youngs_modulus_gpa), 4),
+                poisson_ratio=round(float(poisson_ratio), 4),
+                effective_modulus_gpa=0.0,
+                relative_stiffness=0.0,
+                mean_von_mises_mpa=0.0,
+                peak_von_mises_mpa=0.0,
+                peak_stress_concentration=0.0,
+                converged=False,
+                iterations=0,
+                relative_residual=0.0,
+                note=(
+                    "Optional .[sms] extra not installed (BASE-Laboratory/structural_mechanics_solver "
+                    "is currently private on GitHub)."
+                ),
+            ),
+            None,
+        )
 
     import sms  # type: ignore[import-not-found]
 

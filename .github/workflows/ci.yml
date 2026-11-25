@@ -21,10 +21,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gfortran libopenmpi-dev cmake
 
-      - name: Install OpenImpala-Hub with C++/MPI, SMS Fortran & dev dependencies
+      - name: Install OpenImpala-Hub with C++/MPI, optional SMS Fortran & dev dependencies
+        env:
+          SMS_GITHUB_TOKEN: ${{ secrets.SMS_GITHUB_TOKEN }}
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[mpi,sms,dev]"
+          pip install -e ".[mpi,dev]"
+          if [ -n "${SMS_GITHUB_TOKEN:-}" ]; then
+            git config --global url."https://x-access-token:${SMS_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+            pip install --no-deps ".[sms]"
+          else
+            GIT_TERMINAL_PROMPT=0 pip install --no-deps ".[sms]" || echo "Optional private [sms] extra skipped on unauthenticated runner"
+          fi
           playwright install --with-deps chromium
 
       - name: Enforce BASE Lab Layer 4 import boundaries
@@ -47,9 +55,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t openimpala-hub:ci .
+        run: docker build --build-arg SMS_GITHUB_TOKEN="${{ secrets.SMS_GITHUB_TOKEN }}" -t openimpala-hub:ci .
 
-      - name: Start container and verify /healthz + coupled OpenImpala & SMS /api/v1/solve
+      - name: Start container and verify /healthz + v0.3 multiphysics /api/v1/solve
         run: |
           docker run -d --name hub-smoke -p 7860:7860 openimpala-hub:ci
           for i in $(seq 1 30); do
@@ -63,5 +71,5 @@ jobs:
           curl -fsS -X POST http://127.0.0.1:7860/api/v1/solve \
             -H "Content-Type: application/json" \
             -d '{"microstructure": {"source_kind": "carbon_felt", "shape": [20, 20, 20], "voxel_size_um": [1.6, 1.6, 1.6]}, "solve": {"directions": ["z"], "compute_mechanics": true}}' \
-            | jq -e '.mechanics.backend == "sms-fortran" and .electrochem.limiting_c_rate > 0'
+            | jq -e '.mechanics.backend != null and .electrochem.limiting_c_rate > 0 and .morphology.percolating_fraction > 0'
           docker rm -f hub-smoke
