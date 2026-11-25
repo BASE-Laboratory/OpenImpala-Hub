@@ -318,7 +318,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                 children=[
                                                     html.Span("Compression load"),
                                                     html.Span(
-                                                        "150 kPa",
+                                                        "238 kPa",
                                                         id="clamping-kpa-readout",
                                                         className="field-readout",
                                                     ),
@@ -329,14 +329,15 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                 min=0,
                                                 max=500,
                                                 step=10,
-                                                value=150,
-                                                marks={0: "0", 150: "150", 300: "300", 500: "500"},
+                                                value=238,
+                                                marks={0: "0", 68: "68", 238: "238", 451: "451"},
                                             ),
                                         ],
                                     ),
                                     html.Div(
                                         id="porosity-field-wrap",
                                         className="field-group",
+                                        style={"display": "none"},
                                         children=[
                                             html.Div(
                                                 className="field-header",
@@ -389,7 +390,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                     dcc.Input(
                                                         id="voxel-um-input",
                                                         type="number",
-                                                        value=1.6,
+                                                        value=3.2,
                                                         min=0.05,
                                                         max=50.0,
                                                         step="any",
@@ -1068,6 +1069,11 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                 max=max(0, nz_init - 1),
                                                                 step=1,
                                                                 value=default_z_idx,
+                                                                marks={
+                                                                    0: "0",
+                                                                    nz_init // 2: str(nz_init // 2),
+                                                                    max(0, nz_init - 1): str(max(0, nz_init - 1)),
+                                                                },
                                                             )
                                                         ],
                                                     ),
@@ -1106,6 +1112,11 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                                 max=max(0, nz_init - 1),
                                                                 step=1,
                                                                 value=default_z_idx,
+                                                                marks={
+                                                                    0: "0",
+                                                                    nz_init // 2: str(nz_init // 2),
+                                                                    max(0, nz_init - 1): str(max(0, nz_init - 1)),
+                                                                },
                                                             )
                                                         ],
                                                     ),
@@ -1149,7 +1160,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                     dcc.Dropdown(
                                                         id="chemistry-dropdown",
                                                         options=chem_options,
-                                                        value="nmc811_li_ion",
+                                                        value="vanadium_flow_felt",
                                                         clearable=False,
                                                     )
                                                 ],
@@ -1372,7 +1383,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                     ),
                                 ],
                             ),
-                            # Context chart B: Operando cycling voltage + 3-row structural traces
+                            # Context chart B: Operando cycling / compression load + structural traces
                             html.Div(
                                 id="right-panel-xray-charts",
                                 style={"display": "none"},
@@ -1380,9 +1391,12 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                     html.Div(
                                         className="sec-heading",
                                         children=[
-                                            html.Span("Cell voltage during cycling"),
+                                            html.Span(
+                                                "In-situ clamping load (DLS I12)",
+                                                id="xray-echem-title",
+                                            ),
                                             _info_popover(
-                                                "Measured cell voltage during plating and stripping. The vertical red line marks the X-ray scan timepoint currently shown.",
+                                                "Displays clamping pressure for mechanical compression scans, cell voltage for operando cycling scans, or live slice brightness distribution for single scans.",
                                                 flip=True,
                                             ),
                                         ],
@@ -1392,19 +1406,24 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                         config={"displayModeBar": False},
                                     ),
                                     html.Div(
-                                        className="sec-heading",
-                                        style={"marginTop": "10px"},
+                                        id="xray-struct-section",
                                         children=[
-                                            html.Span("Structural changes during cycling"),
-                                            _info_popover(
-                                                "Top: brightness at the plating interface. Middle: outer rim vs centre check (flat = stable beam). Bottom: volume fraction of dark voids and plated lithium in the active layer.",
-                                                flip=True,
+                                            html.Div(
+                                                className="sec-heading",
+                                                style={"marginTop": "10px"},
+                                                children=[
+                                                    html.Span("Structural changes during cycling"),
+                                                    _info_popover(
+                                                        "Top: brightness at the plating interface. Middle: outer rim vs centre check (flat = stable beam). Bottom: volume fraction of dark voids and plated lithium in the active layer.",
+                                                        flip=True,
+                                                    ),
+                                                ],
+                                            ),
+                                            dcc.Graph(
+                                                id="operando-structural-graph",
+                                                config={"displayModeBar": False},
                                             ),
                                         ],
-                                    ),
-                                    dcc.Graph(
-                                        id="operando-structural-graph",
-                                        config={"displayModeBar": False},
                                     ),
                                 ],
                             ),

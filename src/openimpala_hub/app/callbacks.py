@@ -42,6 +42,7 @@ from .figures import (
     build_3d_isosurface_figure,
     build_chunked_mesh3d_figure,
     build_compact_discharge_figure,
+    build_compression_step_figure,
     build_directional_and_profile_figure,
     build_electrochem_figure,
     build_gp_steering_figure,
@@ -349,7 +350,11 @@ def _build_plain_results_rows(run: ExecutedRun) -> list[html.Tr]:
 
     e_gpa = mech.get("effective_modulus_gpa")
     if e_gpa is not None:
-        stiff_str = f"{float(e_gpa):.2f} GPa"
+        val_gpa = float(e_gpa)
+        if val_gpa < 0.005 and s.solid_effective_conductivity_z <= 0 and s.porosity < 0.999:
+            stiff_str = "0.00 GPa (no Z bridge)"
+        else:
+            stiff_str = f"{val_gpa:.2f} GPa"
     else:
         stiff_str = "Off (enable SMS)" if has_sms_backend() else "Optional .[sms]"
 
@@ -522,12 +527,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Output("clamping-field-wrap", "style"),
         Output("porosity-field-wrap", "style"),
         Output("electrode-role-dropdown", "value"),
+        Output("chemistry-dropdown", "value"),
         Input("clamping-kpa-slider", "value"),
         Input("porosity-slider", "value"),
         Input("virtual-compress-slider", "value"),
         Input("vol-threshold-slider", "value"),
         Input("source-kind-dropdown", "value"),
         State("electrode-role-dropdown", "value"),
+        State("chemistry-dropdown", "value"),
     )
     def _sync_control_readouts(
         kpa: float,
@@ -536,15 +543,26 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         thr: float,
         source_kind: str,
         cur_role: str,
+        cur_chem: str,
     ):
         show_kpa = source_kind in ("porousdiff_gallery", "carbon_felt")
-        show_eps = source_kind not in ("open_cube", "benchmark_dataset")
+        show_eps = source_kind not in (
+            "open_cube",
+            "benchmark_dataset",
+            "porousdiff_gallery",
+            "two_phase_xct",
+        )
         role_out = cur_role
+        chem_out = cur_chem or "vanadium_flow_felt"
         if ctx.triggered_id == "source-kind-dropdown":
             if source_kind == "multiphase_electrode":
                 role_out = "positive"
+                chem_out = "nmc811_li_ion"
             elif source_kind in ("porousdiff_gallery", "carbon_felt"):
                 role_out = "negative"
+                chem_out = "vanadium_flow_felt"
+            else:
+                chem_out = "nmc811_li_ion"
         return (
             f"{float(kpa or 0):.0f} kPa",
             f"{float(eps or 0.5) * 100:.0f}%",
@@ -553,6 +571,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             {"display": "block"} if show_kpa else {"display": "none"},
             {"display": "block"} if show_eps else {"display": "none"},
             role_out,
+            chem_out,
         )
 
     # ── 6. Operando Dataset Bounds & ROI Readouts ──
@@ -883,7 +902,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                     directions=("x", "y", "z"),
                     solid_phases=(1, 2),
                     compute_mechanics=want_sms,
-                    chemistry_preset=chem_key or "vrfb_carbon_felt",
+                    chemistry_preset=chem_key or "vanadium_flow_felt",
                 )
                 ex = run_transport_pipeline(ms, ss)
                 last_id = registry.put(ex)
@@ -1163,11 +1182,14 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Output("right-panel-sim-chart", "style"),
         Output("right-panel-xray-charts", "style"),
         Output("right-panel-3d-hist", "style"),
+        Output("xray-echem-title", "children"),
+        Output("xray-struct-section", "style"),
         Input("active-run-id-store", "data"),
         Input("slice-display-mode", "value"),
         Input("main-view-tabs", "value"),
         Input("operando-dataset-dropdown", "value"),
         Input("operando-time-slider", "value"),
+        Input("operando-z-slider", "value"),
         Input("theme-store", "data"),
         State("run-history-store", "data"),
     )
@@ -1177,6 +1199,7 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         tab_val: str,
         ds_key: str,
         tp_idx: int,
+        z_idx: int,
         theme: str,
         history: list[dict] | None,
     ):
@@ -1220,6 +1243,8 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                 hide,
                 hide,
                 show,
+                no_update,
+                hide,
             )
 
         if disp_mode == "xray":
@@ -1227,6 +1252,47 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             ds = datasets.get(ds_key) or next(iter(datasets.values()))
             idx = int(np.clip(tp_idx or 0, 0, len(ds.timepoints) - 1))
             tp = ds.timepoints[idx]
+            sl = load_lazy_slice(str(tp.path), int(z_idx or 0))
+            fig_hist = build_slice_histogram_figure(sl["hist"], sl["edges"], height=205, dark_mode=dark)
+
+            if ds_key == "dls_i12_felt":
+                fig_ec = build_compression_step_figure(
+                    ["68 kPa", "238 kPa", "451 kPa"],
+                    [68.0, 238.0, 451.0],
+                    idx,
+                    dark_mode=dark,
+                )
+                return (
+                    subtitle,
+                    rows,
+                    tech_line,
+                    bpx_text,
+                    fig_dis,
+                    fig_ec,
+                    fig_hist,
+                    hide,
+                    show,
+                    hide,
+                    "In-situ clamping load (DLS I12)",
+                    hide,
+                )
+
+            if len(ds.timepoints) <= 1:
+                return (
+                    subtitle,
+                    rows,
+                    tech_line,
+                    bpx_text,
+                    fig_dis,
+                    fig_hist,
+                    empty_placeholder_figure("", height=80, dark_mode=dark),
+                    hide,
+                    show,
+                    hide,
+                    "Slice brightness distribution",
+                    hide,
+                )
+
             df = load_echem_csv(str(ds.echem_csv))
             paths = tuple(str(t.path) for t in ds.timepoints)
             t_hours = [t.t_h for t in ds.timepoints]
@@ -1244,6 +1310,8 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
                 hide,
                 show,
                 hide,
+                "Cell voltage during cycling",
+                show,
             )
 
         return (
@@ -1252,10 +1320,12 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             tech_line,
             bpx_text,
             fig_dis,
-            empty_placeholder_figure("Switch to X-ray Scans to view cycling traces", height=180, dark_mode=dark),
+            empty_placeholder_figure("Switch to X-ray Scans to view scan traces", height=180, dark_mode=dark),
             empty_placeholder_figure("", height=180, dark_mode=dark),
             show,
             hide,
+            hide,
+            "In-situ clamping load (DLS I12)",
             hide,
         )
 
@@ -1380,7 +1450,9 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         Output("cmp-right-select", "options"),
         Output("cmp-right-select", "value"),
         Output("cmp-left-z", "max"),
+        Output("cmp-left-z", "marks"),
         Output("cmp-right-z", "max"),
+        Output("cmp-right-z", "marks"),
         Input("cmp-mode-radio", "value"),
         Input("operando-dataset-dropdown", "value"),
         Input("run-history-store", "data"),
@@ -1390,14 +1462,20 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
         ds_key: str,
         history: list[dict] | None,
     ):
+        def _sparse_marks(m: int) -> dict[int, str]:
+            m_i = max(0, int(m))
+            return {0: "0", m_i // 2: str(m_i // 2), m_i: str(m_i)}
+
         if cmp_mode == "xray":
             datasets = discover_operando_datasets()
             ds = datasets.get(ds_key) or next(iter(datasets.values()))
             opts = [{"label": tp.label, "value": str(i)} for i, tp in enumerate(ds.timepoints)]
             nz, _, _ = stack_dimensions(str(ds.timepoints[0].path))
             v_left = "0"
-            v_right = "1" if len(opts) > 1 else "0"
-            return opts, v_left, opts, v_right, max(0, nz - 1), max(0, nz - 1)
+            v_right = str(len(opts) - 1) if len(opts) > 1 else "0"
+            z_max = max(0, nz - 1)
+            mk = _sparse_marks(z_max)
+            return opts, v_left, opts, v_right, z_max, mk, z_max, mk
 
         items = list(history or [])
         opts = [
@@ -1408,14 +1486,15 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             for h in items
         ]
         if not opts:
-            return [], None, [], None, 47, 47
+            mk47 = _sparse_marks(47)
+            return [], None, [], None, 47, mk47, 47, mk47
         v_left = opts[0]["value"]
         v_right = opts[-1]["value"]
         r_left = registry.get_or_rehydrate(v_left, items)
         r_right = registry.get_or_rehydrate(v_right, items)
         m_l = plane_slider_bounds_for_run(r_left, "xz")[0] if r_left else 47
         m_r = plane_slider_bounds_for_run(r_right, "xz")[0] if r_right else 47
-        return opts, v_left, opts, v_right, m_l, m_r
+        return opts, v_left, opts, v_right, m_l, _sparse_marks(m_l), m_r, _sparse_marks(m_r)
 
     @app.callback(
         Output("cmp-left-z", "value"),
@@ -1480,12 +1559,16 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             sr = load_lazy_slice(str(tp_r.path), int(zr or 0), hist_range=shared_rng, cmap=cmap or "grayscale")
             hl = build_slice_histogram_figure(sl["hist"], sl["edges"], dark_mode=dark, x_range=shared_rng)
             hr = build_slice_histogram_figure(sr["hist"], sr["edges"], dark_mode=dark, x_range=shared_rng)
-            m_struct = dataset_structural_metrics(tuple(str(t.path) for t in ds.timepoints))
-            v_l = m_struct["low_atten_fraction"][i_l] * 100.0
-            v_r = m_struct["low_atten_fraction"][i_r] * 100.0
+            centres_l = 0.5 * (sl["edges"][:-1] + sl["edges"][1:])
+            centres_r = 0.5 * (sr["edges"][:-1] + sr["edges"][1:])
+            mean_l = float(np.average(centres_l, weights=np.maximum(sl["hist"], 1e-9)))
+            mean_r = float(np.average(centres_r, weights=np.maximum(sr["hist"], 1e-9)))
+            mid_thr = 0.5 * (shared_rng[0] + shared_rng[1])
+            bright_l = float(sl["hist"][centres_l >= mid_thr].sum() / max(1.0, float(sl["hist"].sum()))) * 100.0
+            bright_r = float(sr["hist"][centres_r >= mid_thr].sum() / max(1.0, float(sr["hist"].sum()))) * 100.0
             delta_txt = (
-                f"Active-layer void + plated Li fraction: {tp_l.label} = {v_l:.2f}% vs "
-                f"{tp_r.label} = {v_r:.2f}% (change: {v_r - v_l:+.2f} percentage points)."
+                f"Slice brightness comparison: {tp_l.label} mean = {mean_l:.1f} ({bright_l:.1f}% high-attenuation solid) vs "
+                f"{tp_r.label} mean = {mean_r:.1f} ({bright_r:.1f}% high-attenuation solid; Δ = {bright_r - bright_l:+.1f} pp)."
             )
             return (
                 sl["png_src"],
@@ -1569,11 +1652,11 @@ def register_callbacks(app: Dash, registry: RunRegistry) -> None:
             specific_surface_area_m_inv=max(s.interfacial_area_active_m_inv, 2.0e4),
             solid_sigma_eff_z=max(s.solid_effective_conductivity_z, 0.02),
             thickness_m=thick_m,
-            chemistry_key=chem_key or "nmc811_li_ion",
+            chemistry_key=chem_key or "vanadium_flow_felt",
         )
         fig_ec = build_electrochem_figure(ec_rep.to_dict(), dark_mode=dark)
         fig_mo = (
-            build_morphology_figure(s.morphology, dark_mode=dark)
+            build_morphology_figure(run, dark_mode=dark)
             if s.morphology
             else empty_placeholder_figure("No pore statistics", dark_mode=dark)
         )

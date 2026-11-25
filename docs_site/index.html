@@ -220,7 +220,7 @@
           <div class="field-head"><span>Compression load</span><span class="readout" id="lbl-kpa">238 kPa</span></div>
           <input type="range" id="inp-kpa" min="0" max="500" step="10" value="238" />
         </div>
-        <div class="field" id="field-eps">
+        <div class="field hidden" id="field-eps">
           <div class="field-head"><span>Target pore space</span><span class="readout" id="lbl-eps">76%</span></div>
           <input type="range" id="inp-eps" min="28" max="88" step="2" value="76" />
         </div>
@@ -235,7 +235,7 @@
           </div>
           <div>
             <div class="field-head"><span>Pixel (µm)</span></div>
-            <input type="number" id="inp-vox" value="1.6" min="0.2" max="20" step="any" />
+            <input type="number" id="inp-vox" value="3.2" min="0.2" max="20" step="any" />
           </div>
         </div>
         <button class="btn btn-primary" id="btn-run-gen">Generate &amp; simulate sample</button>
@@ -264,7 +264,7 @@
           </select>
         </div>
         <div class="field" id="xray-tp-wrap">
-          <div class="field-head"><span>Compression / Scan state</span><span class="readout" id="lbl-xray-tp">451 kPa (0.053 mV/V)</span></div>
+          <div class="field-head"><span>Scan step / load</span><span class="readout" id="lbl-xray-tp">451 kPa (0.053 mV/V)</span></div>
           <input type="range" id="inp-xray-tp" min="0" max="2" step="1" value="2" />
         </div>
         <div class="field">
@@ -279,7 +279,7 @@
           </details>
         </div>
         <div class="field">
-          <div class="field-head"><span>Region X centre</span><span class="readout" id="lbl-roi-box">48 x 48 x 24 px</span></div>
+          <div class="field-head"><span>Region X centre</span><span class="readout" id="lbl-roi-box">48 x 48 x 48 px</span></div>
           <input type="range" id="inp-roi-cx" min="28" max="164" step="2" value="96" />
         </div>
         <div class="field">
@@ -318,6 +318,11 @@
           <div>
             <label><input type="radio" name="dispMode" value="sim" checked /> Simulated sample</label>
             <label style="margin-left:10px;"><input type="radio" name="dispMode" value="xray" /> Raw X-ray scan</label>
+          </div>
+          <div id="sim-plane-bar">
+            <label><input type="radio" name="planeMode" value="xz" checked /> XZ (thickness)</label>
+            <label style="margin-left:8px;"><input type="radio" name="planeMode" value="xy" /> XY (in-plane)</label>
+            <label style="margin-left:8px;"><input type="radio" name="planeMode" value="yz" /> YZ</label>
           </div>
           <div id="sim-layer-bar">
             <label><input type="radio" name="layerMode" value="flux" checked /> Ion current</label>
@@ -386,14 +391,14 @@
 
       <!-- DISCHARGE & PORES -->
       <div id="view-pores" class="hidden">
-        <div class="sec-heading"><span>Simulated discharge curves &amp; pore size distribution</span></div>
+        <div class="sec-heading"><span>Simulated discharge curves &amp; 3D pore connectivity</span></div>
         <div class="compare-grid">
           <div>
-            <div style="font-weight:600;margin-bottom:6px;">Cell voltage vs delivered capacity (0.5C – 4C)</div>
+            <div style="font-weight:600;margin-bottom:6px;" id="pores-dis-heading">Cell voltage vs delivered capacity (0.5C – 4C)</div>
             <canvas id="pores-discharge-canvas" width="480" height="300" style="width:100%;border:1.5px solid var(--rule-strong);background:var(--well-bg);"></canvas>
           </div>
           <div>
-            <div style="font-weight:600;margin-bottom:6px;">Pore connectivity &amp; solid fraction</div>
+            <div style="font-weight:600;margin-bottom:6px;">6-connected pore network &amp; solid fraction</div>
             <canvas id="pores-morph-canvas" width="480" height="300" style="width:100%;border:1.5px solid var(--rule-strong);background:var(--well-bg);"></canvas>
           </div>
         </div>
@@ -439,13 +444,13 @@
       <table class="results-table" id="results-table"></table>
 
       <div id="right-sim-box">
-        <div class="sec-heading"><span>Simulated discharge (0.5C – 4C)</span></div>
+        <div class="sec-heading"><span id="right-dis-title">Simulated discharge (0.5C – 4C)</span></div>
         <canvas id="right-discharge-canvas" width="380" height="215" style="width:100%;border:1px solid var(--rule-soft);background:var(--well-bg);"></canvas>
       </div>
 
       <div id="right-xray-box" class="hidden">
-        <div class="sec-heading"><span>Cell voltage across compression steps</span></div>
-        <canvas id="right-echem-canvas" width="380" height="190" style="width:100%;border:1px solid var(--rule-soft);background:var(--well-bg);"></canvas>
+        <div class="sec-heading"><span id="right-xray-title">In-situ clamping load (DLS I12)</span></div>
+        <canvas id="right-echem-canvas" width="380" height="195" style="width:100%;border:1px solid var(--rule-soft);background:var(--well-bg);"></canvas>
       </div>
     </aside>
   </main>
@@ -459,7 +464,7 @@
       shape: [128, 192, 192],
       chunks: [16, 192, 192],
       voxUm: 1.6,
-      roiBox: [48, 48, 24],
+      roiBox: [48, 48, 48],
       brightSolid: true,
       tps: [
         { store: "dls_i12_068kpa.ome.zarr", label: "68 kPa (0.008 mV/V)", t_h: 0.5, kpa: 68 },
@@ -472,7 +477,7 @@
       shape: [48, 400, 400],
       chunks: [8, 400, 400],
       voxUm: 3.25,
-      roiBox: [64, 64, 16],
+      roiBox: [48, 48, 40],
       brightSolid: true,
       tps: [
         { store: "dls_i13_zn13x_capillary.ome.zarr", label: "Scan 169067 (Green et al. 2025)", t_h: 1.5, kpa: 0 }
@@ -483,7 +488,7 @@
       shape: [128, 256, 256],
       chunks: [16, 256, 256],
       voxUm: 2.0,
-      roiBox: [56, 56, 24],
+      roiBox: [48, 48, 48],
       brightSolid: true,
       tps: [
         { store: "nlm25_dendritic_xct.ome.zarr", label: "Slices 850–977 (256x256)", t_h: 1.5, kpa: 0 }
@@ -496,12 +501,14 @@
     tab: "slices",
     sourceMode: "generate",
     dispMode: "sim",
+    planeMode: "xz",
     layerMode: "flux",
     seed: 42,
     activeRun: null,
     history: [],
     chunkCache: new Map(),
     lastChunkInfo: "Ready",
+    lastXraySlice: null,
     uploadedVol: null
   };
 
@@ -584,46 +591,120 @@
     return { slice: chunk.subarray(offset, offset + ny * nx), ny, nx, tp, ds };
   }
 
-  // Real DLS I12 synchrotron carbon-felt solver via level-1 multiscale OME-Zarr chunks (64 x 96 x 96 @ 3.2 um)
-  async function runRealSynchrotronFelt(kpa) {
+  // Fast O(N) 2D integral-image background subtraction + IsoData fibre segmentation (eliminates Paganin beam dome)
+  function segmentCarbonFibres3D(raw, nz, ny, nx, targetSolidShift) {
+    const hp = new Float32Array(raw.length);
+    const rad = Math.max(6, Math.round(Math.min(ny, nx) / 5));
+    const integ = new Float64Array((ny + 1) * (nx + 1));
+    let hMin = 1e9, hMax = -1e9;
+    for (let z = 0; z < nz; z++) {
+      const zOff = z * ny * nx;
+      integ.fill(0);
+      for (let y = 0; y < ny; y++) {
+        let rowSum = 0;
+        for (let x = 0; x < nx; x++) {
+          rowSum += raw[zOff + y * nx + x];
+          integ[(y + 1) * (nx + 1) + (x + 1)] = integ[y * (nx + 1) + (x + 1)] + rowSum;
+        }
+      }
+      for (let y = 0; y < ny; y++) {
+        const y0 = Math.max(0, y - rad), y1 = Math.min(ny, y + rad + 1);
+        for (let x = 0; x < nx; x++) {
+          const x0 = Math.max(0, x - rad), x1 = Math.min(nx, x + rad + 1);
+          const sum = integ[y1 * (nx + 1) + x1] - integ[y0 * (nx + 1) + x1] - integ[y1 * (nx + 1) + x0] + integ[y0 * (nx + 1) + x0];
+          const bg = sum / ((y1 - y0) * (x1 - x0));
+          const d = raw[zOff + y * nx + x] - bg;
+          hp[zOff + y * nx + x] = d;
+          if (d < hMin) hMin = d;
+          if (d > hMax) hMax = d;
+        }
+      }
+    }
+    // 1D IsoData threshold on positive above-background fibre contrast (prevents negative halo skew)
+    let thr = Math.max(12.0, 0.38 * hMax);
+    for (let it = 0; it < 18; it++) {
+      let s0 = 0, c0 = 0, s1 = 0, c1 = 0;
+      for (let i = 0; i < hp.length; i += 2) {
+        const v = Math.max(0, hp[i]);
+        if (v <= thr) { s0 += v; c0++; } else { s1 += v; c1++; }
+      }
+      if (c0 === 0 || c1 === 0) break;
+      thr = Math.max(9.0, 0.5 * (s0 / c0 + s1 / c1));
+    }
+    const adjThr = Math.max(7.5, thr - targetSolidShift * 14.0);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < hp.length; i++) out[i] = hp[i] >= adjThr ? 1 : 0;
+    return out;
+  }
+
+  function otsuThresholdU8(raw) {
+    const hist = new Float64Array(256);
+    for (let i = 0; i < raw.length; i++) hist[raw[i]]++;
+    const total = raw.length || 1;
+    let sumAll = 0;
+    for (let t = 0; t < 256; t++) sumAll += t * hist[t];
+    let sumB = 0, wB = 0, bestVar = -1, bestT = 128;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (wB === 0) continue;
+      const wF = total - wB;
+      if (wF === 0) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB;
+      const mF = (sumAll - sumB) / wF;
+      const vBetween = wB * wF * (mB - mF) * (mB - mF);
+      if (vBetween > bestVar) { bestVar = vBetween; bestT = t; }
+    }
+    return bestT;
+  }
+
+  // Real DLS I12 synchrotron carbon-felt solver via parallel PorousDiff OME-Zarr phase chunk streaming (isotropic 32^3, 48^3, or 64^3)
+  async function runRealSynchrotronFelt(kpa, requestedSide, makeActive = true) {
     const stores = [
-      { kpa: 68, store: "dls_i12_068kpa.ome.zarr" },
-      { kpa: 238, store: "dls_i12_238kpa.ome.zarr" },
-      { kpa: 451, store: "dls_i12_451kpa.ome.zarr" }
+      { kpa: 68, store: "dls_i12_felt_068kpa.ome.zarr" },
+      { kpa: 238, store: "dls_i12_felt_238kpa.ome.zarr" },
+      { kpa: 451, store: "dls_i12_felt_451kpa.ome.zarr" }
     ];
     let chosen = stores[0];
     for (const s of stores) {
       if (Math.abs(s.kpa - kpa) < Math.abs(chosen.kpa - kpa)) chosen = s;
     }
-    // Load 4 middle level-1 chunks (z = 16..48 of 64, 64x64 XY crop -> 32 x 64 x 64 @ 3.2 um)
-    const nz = 32, ny = 64, nx = 64;
-    const raw = new Uint8Array(nz * ny * nx);
-    const vals = [];
-    for (let cIdx = 2; cIdx < 6; cIdx++) {
-      const ch = await fetchZarrChunk(chosen.store, 1, cIdx, 8 * 96 * 96);
-      for (let lz = 0; lz < 8; lz++) {
-        const oz = (cIdx - 2) * 8 + lz;
-        for (let y = 0; y < ny; y++) {
-          for (let x = 0; x < nx; x++) {
-            const v = ch[lz * 96 * 96 + (y + 16) * 96 + (x + 16)];
-            raw[oz * ny * nx + y * nx + x] = v;
-            if ((x + y + oz) % 4 === 0) vals.push(v);
+    const side = Math.max(32, Math.min(64, parseInt(requestedSide || document.getElementById("inp-side").value || "48", 10)));
+    const fullZ = 64, fullYX = 96, cz = 32;
+    const chunks = await Promise.all([
+      fetchZarrChunk(chosen.store, 0, 0, cz * fullYX * fullYX),
+      fetchZarrChunk(chosen.store, 0, 1, cz * fullYX * fullYX)
+    ]);
+    const y0 = Math.floor((fullYX - side) / 2);
+    const x0 = Math.floor((fullYX - side) / 2);
+    const deltaKpa = kpa - chosen.kpa;
+    // Smooth axial Z compression ratio when interpolating away from {68, 238, 451} kPa
+    const compFactor = Math.max(0.72, Math.min(1.18, 1.0 - deltaKpa / 950.0));
+    const srcSpanZ = Math.min(fullZ, Math.max(16, Math.round(side / compFactor)));
+    const zStart = Math.max(0, Math.floor((fullZ - srcSpanZ) / 2));
+
+    const phase = new Uint8Array(side * side * side);
+    for (let z = 0; z < side; z++) {
+      const za = zStart + Math.floor((z * srcSpanZ) / side);
+      const zb = Math.min(fullZ - 1, zStart + Math.max(Math.floor((z * srcSpanZ) / side), Math.ceil(((z + 1) * srcSpanZ) / side) - 1));
+      for (let zs = za; zs <= zb; zs++) {
+        const ch = chunks[Math.floor(zs / cz)];
+        const lz = zs % cz;
+        for (let y = 0; y < side; y++) {
+          const srcOff = lz * fullYX * fullYX + (y0 + y) * fullYX + x0;
+          const dstOff = z * side * side + y * side;
+          for (let x = 0; x < side; x++) {
+            if (ch[srcOff + x] > 0) phase[dstOff + x] = 1;
           }
         }
       }
     }
-    vals.sort((a, b) => a - b);
-    // Adjust solid threshold smoothly with requested compression load around real scan baseline
-    const extraComp = Math.max(-0.04, Math.min(0.10, (kpa - chosen.kpa) / 2600));
-    const q = Math.max(0.74, Math.min(0.94, 0.87 - extraComp));
-    const thr = vals[Math.floor(vals.length * q)] || 155;
-    const phase = new Uint8Array(nz * ny * nx);
-    for (let i = 0; i < raw.length; i++) phase[i] = raw[i] >= thr ? 1 : 0;
-    return solveVolume(phase, nz, ny, nx, {
+    return solveVolume(phase, side, side, side, {
       kind: "porousdiff",
       label: `DLS I12 Carbon Felt (${kpa} kPa XCT)`,
       kpa,
-      voxUm: 3.2
+      voxUm: 3.2,
+      makeActive
     });
   }
 
@@ -682,6 +763,53 @@
     for (let i = 0; i < total; i++) if (phase[i] === 0) poreCount++;
     const eps = poreCount / total;
 
+    // 6-connected BFS pore network partition (open percolating vs dead-end/trapped)
+    const visited = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let qHead = 0, qTail = 0;
+    for (let i = 0; i < ny * nx; i++) {
+      if (phase[i] === 0) { visited[i] = 1; queue[qTail++] = i; }
+      const topIdx = (nz - 1) * ny * nx + i;
+      if (phase[topIdx] === 0 && !visited[topIdx]) { visited[topIdx] = 2; queue[qTail++] = topIdx; }
+    }
+    // Flood from z=0 (bit 1) and z=nz-1 (bit 2) separately to count true through-percolating voxels
+    const reachBot = new Uint8Array(total);
+    qHead = 0; qTail = 0;
+    for (let i = 0; i < ny * nx; i++) if (phase[i] === 0) { reachBot[i] = 1; queue[qTail++] = i; }
+    while (qHead < qTail) {
+      const cur = queue[qHead++];
+      const z = Math.floor(cur / (ny * nx)), rem = cur % (ny * nx), y = Math.floor(rem / nx), x = rem % nx;
+      if (z > 0 && phase[cur - ny * nx] === 0 && !reachBot[cur - ny * nx]) { reachBot[cur - ny * nx] = 1; queue[qTail++] = cur - ny * nx; }
+      if (z < nz - 1 && phase[cur + ny * nx] === 0 && !reachBot[cur + ny * nx]) { reachBot[cur + ny * nx] = 1; queue[qTail++] = cur + ny * nx; }
+      if (y > 0 && phase[cur - nx] === 0 && !reachBot[cur - nx]) { reachBot[cur - nx] = 1; queue[qTail++] = cur - nx; }
+      if (y < ny - 1 && phase[cur + nx] === 0 && !reachBot[cur + nx]) { reachBot[cur + nx] = 1; queue[qTail++] = cur + nx; }
+      if (x > 0 && phase[cur - 1] === 0 && !reachBot[cur - 1]) { reachBot[cur - 1] = 1; queue[qTail++] = cur - 1; }
+      if (x < nx - 1 && phase[cur + 1] === 0 && !reachBot[cur + 1]) { reachBot[cur + 1] = 1; queue[qTail++] = cur + 1; }
+    }
+    const reachTop = new Uint8Array(total);
+    qHead = 0; qTail = 0;
+    for (let i = 0; i < ny * nx; i++) {
+      const ti = (nz - 1) * ny * nx + i;
+      if (phase[ti] === 0) { reachTop[ti] = 1; queue[qTail++] = ti; }
+    }
+    while (qHead < qTail) {
+      const cur = queue[qHead++];
+      const z = Math.floor(cur / (ny * nx)), rem = cur % (ny * nx), y = Math.floor(rem / nx), x = rem % nx;
+      if (z > 0 && phase[cur - ny * nx] === 0 && !reachTop[cur - ny * nx]) { reachTop[cur - ny * nx] = 1; queue[qTail++] = cur - ny * nx; }
+      if (z < nz - 1 && phase[cur + ny * nx] === 0 && !reachTop[cur + ny * nx]) { reachTop[cur + ny * nx] = 1; queue[qTail++] = cur + ny * nx; }
+      if (y > 0 && phase[cur - nx] === 0 && !reachTop[cur - nx]) { reachTop[cur - nx] = 1; queue[qTail++] = cur - nx; }
+      if (y < ny - 1 && phase[cur + nx] === 0 && !reachTop[cur + nx]) { reachTop[cur + nx] = 1; queue[qTail++] = cur + nx; }
+      if (x > 0 && phase[cur - 1] === 0 && !reachTop[cur - 1]) { reachTop[cur - 1] = 1; queue[qTail++] = cur - 1; }
+      if (x < nx - 1 && phase[cur + 1] === 0 && !reachTop[cur + 1]) { reachTop[cur + 1] = 1; queue[qTail++] = cur + 1; }
+    }
+    let percCount = 0, trappedCount = 0;
+    for (let i = 0; i < total; i++) {
+      if (phase[i] === 0) {
+        if (reachBot[i] && reachTop[i]) percCount++;
+        else if (!reachBot[i] && !reachTop[i]) trappedCount++;
+      }
+    }
+
     const phi = new Float32Array(total);
     for (let z = 0; z < nz; z++) {
       const lin = 1.0 - z / Math.max(1, nz - 1);
@@ -689,8 +817,8 @@
     }
 
     const cond = (p) => (p === 0 ? 1.0 : (p === 2 && spec.kind === "cathode" ? 0.18 : 0.0));
-    const iters = spec.kind === "cube" ? 4 : 75;
-    const omega = 1.62;
+    const iters = spec.kind === "cube" ? 4 : 150;
+    const omega = 1.72;
     for (let it = 0; it < iters; it++) {
       for (let z = 1; z < nz - 1; z++) {
         for (let y = 0; y < ny; y++) {
@@ -737,23 +865,25 @@
         }
       }
     }
-    const dEff = spec.kind === "cube" ? 1.0 : Math.max(0.005, Math.min(eps, totalJz / ((nz - 1) * ny * nx)));
-    const tau = dEff > 0.002 ? eps / dEff : 99.9;
+    const dEff = spec.kind === "cube" ? 1.0 : Math.max(0.0, Math.min(eps, percCount === 0 && spec.kind !== "cathode" ? 0.0 : totalJz / ((nz - 1) * ny * nx)));
+    const tau = dEff > 0.002 ? Math.max(1.0, eps / dEff) : 99.9;
     const solidFrac = 1 - eps;
-    const sigmaZ = spec.kind === "cube" ? 0 : Math.pow(Math.max(0.02, solidFrac), 1.65);
-    const eGpa = spec.kind === "cube" ? 0 : 11.5 * Math.pow(Math.max(0.02, solidFrac), 2.05);
+    const sigmaZ = spec.kind === "cube" ? 0 : Math.pow(Math.max(0.01, solidFrac), 1.65);
+    const eGpa = spec.kind === "cube" ? 0 : 11.5 * Math.pow(Math.max(0.01, solidFrac), 2.05);
     const thickUm = nz * spec.voxUm;
-    const cLim = Math.min(18.0, Math.max(0.35, (dEff * 18.5) / Math.pow(thickUm / 65.0, 1.35)));
+    const cLim = Math.min(18.0, Math.max(0.25, (dEff * 18.5) / Math.pow(thickUm / 65.0, 1.35)));
     const solveMs = (performance.now() - t0).toFixed(1);
 
     const run = {
       id: "run_" + Math.random().toString(36).slice(2, 8),
       label: spec.label, kind: spec.kind, kpa: spec.kpa || 238,
       nz, ny, nx, voxUm: spec.voxUm, phase, phi, flux,
-      porosity: eps, trapped: spec.kind === "cube" ? 0 : Math.max(0, eps * 0.03 * (1 - eps)),
+      porosity: eps,
+      openFrac: percCount / total,
+      trapped: trappedCount / total,
       tau, dEff, sigmaZ, eGpa, cLim, solveMs
     };
-    state.activeRun = run;
+    if (spec.makeActive !== false) state.activeRun = run;
     state.history = [...state.history.filter(h => h.label !== run.label), run].slice(-24);
     return run;
   }
@@ -769,17 +899,24 @@
     }
     octx.putImageData(img, 0, 0);
     ctx2d.imageSmoothingEnabled = false;
-    ctx2d.clearRect(0, 0, cw, ch);
-    ctx2d.drawImage(off, 0, 0, cw, ch);
+    ctx2d.fillStyle = "#050608";
+    ctx2d.fillRect(0, 0, cw, ch);
+    const scale = Math.min(cw / w, ch / h);
+    const dw = Math.round(w * scale), dh = Math.round(h * scale);
+    const dx = Math.floor((cw - dw) / 2), dy = Math.floor((ch - dh) / 2);
+    ctx2d.drawImage(off, dx, dy, dw, dh);
+    return { dx, dy, dw, dh };
   }
 
   async function renderPrimarySlice() {
     const canvas = document.getElementById("slice-canvas");
     const ctx2d = canvas.getContext("2d");
+    const simPlaneBar = document.getElementById("sim-plane-bar");
     const simLayerBar = document.getElementById("sim-layer-bar");
     const simZWrap = document.getElementById("sim-z-wrap");
 
     if (state.dispMode === "xray") {
+      simPlaneBar.classList.add("hidden");
       simLayerBar.classList.add("hidden");
       simZWrap.classList.add("hidden");
       const dsKey = document.getElementById("xray-ds").value;
@@ -787,43 +924,56 @@
       const zIdx = parseInt(document.getElementById("inp-xray-z").value, 10);
       const cmap = document.getElementById("xray-cmap").value;
       const { slice, ny, nx, tp, ds } = await fetchDatasetSlice(dsKey, tpIdx, zIdx);
-      drawArray2D(ctx2d, canvas.width, canvas.height, slice, nx, ny, (v) => cmapRGB(v / 255, cmap));
+      state.lastXraySlice = slice;
+      const box = drawArray2D(ctx2d, canvas.width, canvas.height, slice, nx, ny, (v) => cmapRGB(v / 255, cmap));
 
       const rcx = parseInt(document.getElementById("inp-roi-cx").value, 10);
       const rcy = parseInt(document.getElementById("inp-roi-cy").value, 10);
-      const [bw, bh, bz] = ds.roiBox;
-      const sx = canvas.width / nx, sy = canvas.height / ny;
+      const [bw, bh] = ds.roiBox;
+      const sx = box.dw / nx, sy = box.dh / ny;
       ctx2d.strokeStyle = "#38BDF8";
       ctx2d.lineWidth = 2.5;
-      ctx2d.strokeRect((rcx - bw / 2) * sx, (rcy - bh / 2) * sy, bw * sx, bh * sy);
+      ctx2d.strokeRect(box.dx + (rcx - bw / 2) * sx, box.dy + (rcy - bh / 2) * sy, bw * sx, bh * sy);
 
       document.getElementById("slice-cap-left").textContent = `${ds.label} · ${tp.label} · XY slice ${zIdx}`;
       document.getElementById("slice-cap-right").textContent = `${Math.round(nx * ds.voxUm)} x ${Math.round(ny * ds.voxUm)} µm · OME-Zarr v0.4`;
       document.getElementById("tech-readout").textContent = state.lastChunkInfo;
+      drawOperandoEchem(document.getElementById("right-echem-canvas"));
       return;
     }
 
+    simPlaneBar.classList.remove("hidden");
     simLayerBar.classList.remove("hidden");
     simZWrap.classList.remove("hidden");
     const run = state.activeRun;
     if (!run) return;
     const zSlider = document.getElementById("inp-sim-slice");
-    zSlider.max = String(run.ny - 1);
-    const yIdx = Math.min(run.ny - 1, parseInt(zSlider.value, 10));
-    const plane = new Float32Array(run.nz * run.nx);
-    const ph2d = new Uint8Array(run.nz * run.nx);
+    let pw = run.nx, ph = run.nz, maxIdx = run.ny - 1;
+    if (state.planeMode === "xy") { pw = run.nx; ph = run.ny; maxIdx = run.nz - 1; }
+    else if (state.planeMode === "yz") { pw = run.ny; ph = run.nz; maxIdx = run.nx - 1; }
+    zSlider.max = String(maxIdx);
+    const sIdx = Math.max(0, Math.min(maxIdx, parseInt(zSlider.value, 10)));
+    const plane = new Float32Array(ph * pw);
+    const ph2d = new Uint8Array(ph * pw);
     let vmax = 1.4;
-    for (let z = 0; z < run.nz; z++) {
-      for (let x = 0; x < run.nx; x++) {
-        const idx3 = (run.nz - 1 - z) * run.ny * run.nx + yIdx * run.nx + x;
-        const idx2 = z * run.nx + x;
+    for (let r = 0; r < ph; r++) {
+      for (let cIdx = 0; cIdx < pw; cIdx++) {
+        let idx3;
+        if (state.planeMode === "xy") {
+          idx3 = sIdx * run.ny * run.nx + r * run.nx + cIdx;
+        } else if (state.planeMode === "yz") {
+          idx3 = (run.nz - 1 - r) * run.ny * run.nx + cIdx * run.nx + sIdx;
+        } else {
+          idx3 = (run.nz - 1 - r) * run.ny * run.nx + sIdx * run.nx + cIdx;
+        }
+        const idx2 = r * pw + cIdx;
         ph2d[idx2] = run.phase[idx3];
         const v = state.layerMode === "flux" ? run.flux[idx3] : run.phi[idx3];
         plane[idx2] = v;
         if (state.layerMode === "flux" && v > vmax) vmax = v;
       }
     }
-    drawArray2D(ctx2d, canvas.width, canvas.height, plane, run.nx, run.nz, (v, i) => {
+    drawArray2D(ctx2d, canvas.width, canvas.height, plane, pw, ph, (v, i) => {
       const p = ph2d[i];
       if (state.layerMode === "phase") {
         if (p === 0) return [12, 15, 22];
@@ -834,7 +984,7 @@
       if (p === 2 && state.layerMode === "flux") return [132, 148, 168];
       return cmapRGB(state.layerMode === "flux" ? v / vmax : v, state.layerMode === "flux" ? "magma" : "viridis");
     });
-    document.getElementById("slice-cap-left").textContent = `${run.label} · XZ slice ${yIdx + 1}`;
+    document.getElementById("slice-cap-left").textContent = `${run.label} · ${state.planeMode.toUpperCase()} slice ${sIdx + 1}`;
     document.getElementById("slice-cap-right").textContent = `${run.nx} x ${run.ny} x ${run.nz} px (${run.solveMs} ms)`;
     document.getElementById("tech-readout").textContent = state.lastChunkInfo;
   }
@@ -845,9 +995,11 @@
     document.getElementById("sample-subtitle").textContent =
       `Showing: ${run.label} · ${run.nx} x ${run.ny} x ${run.nz} px at ${run.voxUm.toFixed(2)} µm/px`;
 
+    const openPct = ((run.openFrac !== undefined ? run.openFrac : (run.porosity - run.trapped)) * 100).toFixed(1);
+    const trapPct = (run.trapped * 100).toFixed(1);
     const rows = [
       ["Open pore space (ε)", "Fraction of volume open to liquid electrolyte", `${(run.porosity * 100).toFixed(1)}% (${run.porosity.toFixed(4)})`],
-      ["Connected vs trapped pores", "Trapped pores cannot carry steady current", `${((run.porosity - run.trapped) * 100).toFixed(1)}% open · ${(run.trapped * 100).toFixed(1)}% trapped`],
+      ["Connected vs trapped pores", "Trapped pores cannot carry steady current", `${openPct}% open · ${trapPct}% trapped`],
       ["Pathway tortuosity (τ)", "Detour factor for ions through thickness (1.0 = straight)", run.tau > 50 ? "Blocked" : run.tau.toFixed(3)],
       ["Effective ion diffusivity", "Ion transport speed relative to open liquid", `${(run.dEff * 100).toFixed(1)}% (${run.dEff.toFixed(4)})`],
       ["Solid electrical wiring", "Relative electron conduction through solid network", run.kind === "cube" ? "N/A (all pore)" : run.sigmaZ.toFixed(4)],
@@ -857,6 +1009,12 @@
     document.getElementById("results-table").innerHTML = rows.map(([n, h, v]) =>
       `<tr><td><span class="metric-name">${n}</span><span class="metric-hint">${h}</span></td><td class="metric-val">${v}</td></tr>`
     ).join("");
+
+    const isVrfb = run.kind === "porousdiff" || run.kind === "felt";
+    const chemTag = isVrfb ? "VRFB 1.4 V (0.5C – 4C)" : "NMC811 Li-ion (0.5C – 4C)";
+    document.getElementById("right-dis-title").textContent = `Simulated discharge · ${chemTag}`;
+    const poresHead = document.getElementById("pores-dis-heading");
+    if (poresHead) poresHead.textContent = `Cell voltage vs delivered capacity · ${chemTag}`;
 
     const showXrayRight = state.dispMode === "xray" && state.tab === "slices";
     document.getElementById("right-sim-box").classList.toggle("hidden", showXrayRight);
@@ -869,54 +1027,125 @@
     const c = canvas.getContext("2d");
     const w = canvas.width, h = canvas.height;
     const fg = state.theme === "dark" ? "#E5DADA" : "#2F3E46";
+    const muted = state.theme === "dark" ? "rgba(229,218,218,0.62)" : "rgba(47,62,70,0.68)";
+    const grid = state.theme === "dark" ? "rgba(229,218,218,0.14)" : "rgba(47,62,70,0.14)";
     const acc = state.theme === "dark" ? "#6EA8FE" : "#0035F5";
     c.clearRect(0, 0, w, h);
-    const padL = 42, padR = 14, padT = 18, padB = 28;
-    c.strokeStyle = "rgba(128,128,128,0.28)";
-    c.strokeRect(padL, padT, w - padL - padR, h - padT - padB);
+    const padL = 44, padR = 14, padT = 22, padB = 32;
+    const pw = w - padL - padR, ph = h - padT - padB;
+    const isVrfb = run.kind === "porousdiff" || run.kind === "felt";
+    const vTop = isVrfb ? 1.50 : 4.25;
+    const vBot = isVrfb ? 0.85 : 2.80;
+    const yTicks = isVrfb ? [1.45, 1.25, 1.05, 0.85] : [4.2, 3.8, 3.4, 3.0];
+
+    c.font = "10px IBM Plex Mono, monospace";
+    yTicks.forEach(vt => {
+      const py = padT + ((vTop - vt) / (vTop - vBot)) * ph;
+      c.strokeStyle = grid; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(padL, py); c.lineTo(w - padR, py); c.stroke();
+      c.fillStyle = muted;
+      c.fillText(`${vt.toFixed(1)}V`, 4, py + 3);
+    });
+    [0, 50, 100].forEach(xt => {
+      const px = padL + (xt / 100) * pw;
+      c.strokeStyle = grid; c.beginPath(); c.moveTo(px, padT); c.lineTo(px, h - padB); c.stroke();
+      c.fillStyle = muted; c.fillText(`${xt}%`, px - (xt === 100 ? 18 : 6), h - padB + 13);
+    });
+    c.strokeStyle = "rgba(128,128,128,0.34)";
+    c.strokeRect(padL, padT, pw, ph);
+
     const rates = [0.5, 1, 2, 4];
     const cols = [fg, acc, "#0EA5E9", "#D90429"];
     rates.forEach((cr, idx) => {
-      c.beginPath(); c.strokeStyle = cols[idx]; c.lineWidth = 2;
-      const capMax = Math.max(12, Math.min(100, 100 * (1 - 0.22 * Math.pow(cr / Math.max(0.3, run.cLim), 1.35))));
+      c.beginPath(); c.strokeStyle = cols[idx]; c.lineWidth = 2.1;
+      const capMax = Math.max(14, Math.min(100, 100 * (1 - 0.20 * Math.pow(cr / Math.max(0.3, run.cLim), 1.35))));
       for (let i = 0; i <= 40; i++) {
         const pct = (i / 40) * capMax;
-        const v = 4.15 - 0.55 * (pct / 100) - 0.065 * (cr / Math.max(0.25, run.cLim)) - 0.18 * Math.pow(pct / Math.max(15, capMax), 5);
-        const px = padL + (pct / 100) * (w - padL - padR);
-        const py = padT + ((4.25 - Math.max(2.8, v)) / 1.45) * (h - padT - padB);
+        const v = isVrfb
+          ? 1.43 - 0.24 * (pct / 100) - 0.045 * (cr / Math.max(0.3, run.cLim)) - 0.11 * Math.pow(pct / Math.max(15, capMax), 5)
+          : 4.16 - 0.55 * (pct / 100) - 0.065 * (cr / Math.max(0.3, run.cLim)) - 0.18 * Math.pow(pct / Math.max(15, capMax), 5);
+        const px = padL + (pct / 100) * pw;
+        const py = padT + ((vTop - Math.max(vBot, v)) / (vTop - vBot)) * ph;
         if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
       }
       c.stroke();
       c.fillStyle = cols[idx]; c.font = "600 10.5px Montserrat, sans-serif";
-      c.fillText(`${cr}C`, padL + 8 + idx * 46, padT + 13);
+      c.fillText(`${cr}C`, padL + 6 + idx * 44, padT - 6);
     });
     c.fillStyle = fg; c.font = "10.5px Montserrat, sans-serif";
-    c.fillText("Delivered capacity (%)", w / 2 - 48, h - 7);
+    c.fillText("Delivered capacity (%)", padL + pw / 2 - 54, h - 4);
   }
 
   function drawOperandoEchem(canvas) {
     const c = canvas.getContext("2d");
     const w = canvas.width, h = canvas.height;
     const fg = state.theme === "dark" ? "#E5DADA" : "#2F3E46";
+    const muted = state.theme === "dark" ? "rgba(229,218,218,0.62)" : "rgba(47,62,70,0.68)";
+    const grid = state.theme === "dark" ? "rgba(229,218,218,0.14)" : "rgba(47,62,70,0.14)";
     const acc = state.theme === "dark" ? "#6EA8FE" : "#0035F5";
     c.clearRect(0, 0, w, h);
-    const padL = 42, padR = 14, padT = 14, padB = 26;
-    c.strokeStyle = acc; c.lineWidth = 2; c.beginPath();
-    for (let i = 0; i <= 120; i++) {
-      const t = (i / 120) * 3.0;
-      const v = t < 1.0 ? 1.18 : (t < 2.0 ? 1.255 : 1.225);
-      const px = padL + (t / 3.0) * (w - padL - padR);
-      const py = padT + ((1.28 - v) / 0.14) * (h - padT - padB);
-      if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
-    }
-    c.stroke();
+    const padL = 44, padR = 14, padT = 16, padB = 30;
+    const pw = w - padL - padR, ph = h - padT - padB;
     const dsKey = document.getElementById("xray-ds").value;
-    const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
-    const tpIdx = Math.min(ds.tps.length - 1, parseInt(document.getElementById("inp-xray-tp").value, 10));
-    const cx = padL + (ds.tps[tpIdx].t_h / 3.0) * (w - padL - padR);
-    c.strokeStyle = "#D90429"; c.beginPath(); c.moveTo(cx, padT); c.lineTo(cx, h - padB); c.stroke();
-    c.fillStyle = fg; c.font = "10.5px Montserrat, sans-serif";
-    c.fillText("Step-compression time (0 – 3.0 h)", w / 2 - 68, h - 6);
+    const titleEl = document.getElementById("right-xray-title");
+
+    if (dsKey === "dls_i12") {
+      if (titleEl) titleEl.textContent = "In-situ clamping load (DLS I12)";
+      const loads = [68, 238, 451];
+      const labels = ["68 kPa", "238 kPa", "451 kPa"];
+      c.font = "10px IBM Plex Mono, monospace";
+      [0, 250, 500].forEach(yv => {
+        const py = padT + ((500 - yv) / 500) * ph;
+        c.strokeStyle = grid; c.beginPath(); c.moveTo(padL, py); c.lineTo(w - padR, py); c.stroke();
+        c.fillStyle = muted; c.fillText(`${yv}`, 10, py + 3);
+      });
+      c.strokeRect(padL, padT, pw, ph);
+      const tpIdx = Math.min(2, parseInt(document.getElementById("inp-xray-tp").value, 10));
+      const cxActive = padL + (tpIdx / 2) * pw;
+      c.strokeStyle = "#D90429"; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(cxActive, padT); c.lineTo(cxActive, h - padB); c.stroke();
+
+      c.strokeStyle = acc; c.lineWidth = 2.4; c.beginPath();
+      loads.forEach((kv, i) => {
+        const px = padL + (i / 2) * pw;
+        const py = padT + ((500 - kv) / 500) * ph;
+        if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+      });
+      c.stroke();
+      loads.forEach((kv, i) => {
+        const px = padL + (i / 2) * pw;
+        const py = padT + ((500 - kv) / 500) * ph;
+        c.fillStyle = i === tpIdx ? "#D90429" : acc;
+        c.beginPath(); c.arc(px, py, 4.5, 0, Math.PI * 2); c.fill();
+        c.fillStyle = muted; c.font = "10px IBM Plex Mono, monospace";
+        c.fillText(labels[i], px - (i === 2 ? 36 : (i === 1 ? 20 : 2)), h - padB + 14);
+      });
+      c.fillStyle = fg; c.font = "10px Montserrat, sans-serif";
+      c.fillText("Clamping pressure [kPa]", padL + pw / 2 - 54, h - 3);
+      return;
+    }
+
+    if (titleEl) titleEl.textContent = "Slice brightness distribution";
+    const bins = new Float64Array(32);
+    const sl = state.lastXraySlice;
+    if (sl && sl.length) {
+      for (let i = 0; i < sl.length; i++) bins[Math.min(31, sl[i] >> 3)]++;
+    }
+    let bMax = 1;
+    for (let i = 0; i < 32; i++) if (bins[i] > bMax) bMax = bins[i];
+    c.strokeStyle = grid; c.strokeRect(padL, padT, pw, ph);
+    const bw = pw / 32;
+    for (let i = 0; i < 32; i++) {
+      const bh = (bins[i] / bMax) * (ph - 6);
+      c.fillStyle = acc;
+      c.fillRect(padL + i * bw + 0.5, padT + ph - bh, Math.max(1, bw - 1.2), bh);
+    }
+    c.fillStyle = muted; c.font = "10px IBM Plex Mono, monospace";
+    c.fillText("0", padL, h - padB + 13);
+    c.fillText("128", padL + pw / 2 - 10, h - padB + 13);
+    c.fillText("255", padL + pw - 20, h - padB + 13);
+    c.fillStyle = fg; c.font = "10px Montserrat, sans-serif";
+    c.fillText("Greyscale intensity (0 – 255)", padL + pw / 2 - 64, h - 3);
   }
 
   function render3DView() {
@@ -927,8 +1156,9 @@
     c.fillStyle = "#050608"; c.fillRect(0, 0, canvas.width, canvas.height);
     const ang = (parseInt(document.getElementById("inp-3d-angle").value, 10) * Math.PI) / 180;
     const cosA = Math.cos(ang), sinA = Math.sin(ang);
-    const step = run.nx > 40 ? 2 : 1;
-    const scale = Math.min(canvas.width, canvas.height) / (run.nx * 1.85);
+    const step = run.nx > 48 ? 2 : 1;
+    const maxDim = Math.max(run.nx, run.ny, run.nz);
+    const scale = Math.min(canvas.width, canvas.height) / (maxDim * 1.75);
     const voxList = [];
     for (let z = 0; z < run.nz; z += step) {
       for (let y = 0; y < run.ny; y += step) {
@@ -944,15 +1174,15 @@
       }
     }
     voxList.sort((a, b) => a.depth - b.depth);
-    const sz = Math.max(2.5, scale * step * 0.92);
+    const sz = Math.max(2.2, scale * step * 0.88);
     for (const v of voxList) {
-      const shade = 0.55 + 0.45 * (v.z / run.nz);
+      const shade = 0.48 + 0.52 * (v.z / Math.max(1, run.nz));
       c.fillStyle = v.p === 2
         ? `rgb(${Math.round(56 * shade)},${Math.round(189 * shade)},${Math.round(248 * shade)})`
-        : `rgb(${Math.round(190 * shade)},${Math.round(202 * shade)},${Math.round(218 * shade)})`;
+        : `rgb(${Math.round(182 * shade)},${Math.round(198 * shade)},${Math.round(218 * shade)})`;
       c.fillRect(v.sx - sz / 2, v.sy - sz / 2, sz, sz);
     }
-    document.getElementById("cap-3d-right").textContent = `${voxList.length.toLocaleString()} rendered solid blocks`;
+    document.getElementById("cap-3d-right").textContent = `${voxList.length.toLocaleString()} solid fibre/particle voxels`;
   }
 
   async function renderCompareView() {
@@ -977,45 +1207,82 @@
       const mc = document.getElementById("pores-morph-canvas");
       const c = mc.getContext("2d");
       const fg = state.theme === "dark" ? "#E5DADA" : "#2F3E46";
+      const muted = state.theme === "dark" ? "rgba(229,218,218,0.62)" : "rgba(47,62,70,0.68)";
+      const grid = state.theme === "dark" ? "rgba(229,218,218,0.14)" : "rgba(47,62,70,0.14)";
       const acc = state.theme === "dark" ? "#6EA8FE" : "#0035F5";
       c.clearRect(0, 0, mc.width, mc.height);
+      const openVal = state.activeRun.openFrac !== undefined ? state.activeRun.openFrac : (state.activeRun.porosity - state.activeRun.trapped);
+      const deadTrapVal = Math.max(0, state.activeRun.porosity - openVal);
       const bars = [
-        ["Connected pores", state.activeRun.porosity - state.activeRun.trapped, acc],
-        ["Trapped pores", state.activeRun.trapped, "#D90429"],
+        ["Percolating pores", openVal, acc],
+        ["Dead-end & trapped", deadTrapVal, "#D90429"],
         ["Solid phase", 1 - state.activeRun.porosity, fg]
       ];
+      c.font = "10px IBM Plex Mono, monospace";
+      [0, 0.5, 1.0].forEach(yv => {
+        const py = 245 - yv * 200;
+        c.strokeStyle = grid; c.beginPath(); c.moveTo(46, py); c.lineTo(mc.width - 18, py); c.stroke();
+        c.fillStyle = muted; c.fillText(`${Math.round(yv * 100)}%`, 8, py + 3);
+      });
       bars.forEach(([lbl, val, col], idx) => {
-        const bx = 65 + idx * 135;
+        const bx = 72 + idx * 130;
         const bh = Math.max(3, val * 200);
         c.fillStyle = col; c.fillRect(bx, 245 - bh, 76, bh);
-        c.fillStyle = fg; c.font = "600 11px Montserrat, sans-serif";
-        c.fillText(`${(val * 100).toFixed(1)}%`, bx + 16, 238 - bh);
-        c.fillText(lbl, bx - 6, 268);
+        c.fillStyle = fg; c.font = "600 11px IBM Plex Mono, monospace";
+        c.fillText(`${(val * 100).toFixed(1)}%`, bx + 14, 238 - bh);
+        c.font = "600 10.5px Montserrat, sans-serif";
+        c.fillText(lbl, bx - 10, 268);
       });
     }
     if (state.tab === "plan") {
       const pc = document.getElementById("plan-canvas");
       const c = pc.getContext("2d");
       const fg = state.theme === "dark" ? "#E5DADA" : "#2F3E46";
+      const muted = state.theme === "dark" ? "rgba(229,218,218,0.62)" : "rgba(47,62,70,0.68)";
+      const grid = state.theme === "dark" ? "rgba(229,218,218,0.14)" : "rgba(47,62,70,0.14)";
       const acc = state.theme === "dark" ? "#6EA8FE" : "#0035F5";
       c.clearRect(0, 0, pc.width, pc.height);
-      const padL = 54, padR = 24, padT = 24, padB = 34;
-      c.strokeStyle = acc; c.lineWidth = 2.2; c.beginPath();
-      let bestKpa = 225, bestR = 99;
+      const padL = 58, padR = 36, padT = 24, padB = 38;
+      const pw = pc.width - padL - padR, ph = pc.height - padT - padB;
+      c.font = "10.5px IBM Plex Mono, monospace";
+      [1.5, 2.5, 3.5].forEach(rv => {
+        const py = padT + ((4.2 - rv) / 3.0) * ph;
+        c.strokeStyle = grid; c.beginPath(); c.moveTo(padL, py); c.lineTo(pc.width - padR, py); c.stroke();
+        c.fillStyle = muted; c.fillText(rv.toFixed(1), 18, py + 4);
+      });
+      [68, 200, 350, 500].forEach(kv => {
+        const px = padL + ((kv - 20) / 480) * pw;
+        c.strokeStyle = grid; c.beginPath(); c.moveTo(px, padT); c.lineTo(px, pc.height - padB); c.stroke();
+        c.fillStyle = muted; c.fillText(`${kv} kPa`, kv === 500 ? px - 30 : px - 18, pc.height - padB + 15);
+      });
+      c.strokeStyle = "rgba(128,128,128,0.32)"; c.strokeRect(padL, padT, pw, ph);
+
+      c.strokeStyle = acc; c.lineWidth = 2.3; c.beginPath();
+      let bestKpa = 220, bestR = 99;
       for (let k = 20; k <= 500; k += 5) {
         const r = 1.45 + 1.8 * Math.exp(-k / 85) + 0.0038 * Math.pow(Math.max(0, k - 205), 1.35);
         if (r < bestR) { bestR = r; bestKpa = k; }
-        const px = padL + ((k - 20) / 480) * (pc.width - padL - padR);
-        const py = padT + ((4.2 - Math.min(4.1, r)) / 3.0) * (pc.height - padT - padB);
+        const px = padL + ((k - 20) / 480) * pw;
+        const py = padT + ((4.2 - Math.min(4.1, r)) / 3.0) * ph;
         if (k === 20) c.moveTo(px, py); else c.lineTo(px, py);
       }
       c.stroke();
-      const bx = padL + ((bestKpa - 20) / 480) * (pc.width - padL - padR);
-      c.strokeStyle = "#D90429"; c.beginPath(); c.moveTo(bx, padT); c.lineTo(bx, pc.height - padB); c.stroke();
-      c.fillStyle = fg; c.font = "11.5px Montserrat, sans-serif";
-      c.fillText("Compression load (20 – 500 kPa)", pc.width / 2 - 80, pc.height - 8);
+      const bx = padL + ((bestKpa - 20) / 480) * pw;
+      c.strokeStyle = "#D90429"; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(bx, padT); c.lineTo(bx, pc.height - padB); c.stroke();
+
+      state.history.filter(h => h.kind === "porousdiff" || h.kind === "felt").forEach(h => {
+        const rEst = 1.45 + 1.8 * Math.exp(-h.kpa / 85) + 0.0038 * Math.pow(Math.max(0, h.kpa - 205), 1.35);
+        const px = padL + ((Math.max(20, Math.min(500, h.kpa)) - 20) / 480) * pw;
+        const py = padT + ((4.2 - Math.min(4.1, rEst)) / 3.0) * ph;
+        c.fillStyle = "#F59E0B"; c.strokeStyle = fg; c.lineWidth = 1.3;
+        c.beginPath(); c.arc(px, py, 5.5, 0, Math.PI * 2); c.fill(); c.stroke();
+      });
+
+      c.fillStyle = fg; c.font = "11px Montserrat, sans-serif";
+      c.fillText("Clamping load [kPa] vs combined cell resistance R_cell", padL + pw / 2 - 140, pc.height - 5);
       document.getElementById("plan-banner").innerHTML =
-        `<strong>Recommended next load: ${bestKpa} kPa</strong> · Interpolates between DLS I12 synchrotron scans (68, 238, 451 kPa).`;
+        `<strong>Recommended next load: ${bestKpa} kPa</strong> · Balances fibre contact resistance against pore tortuosity across DLS I12 scans.`;
       document.getElementById("btn-run-suggested").dataset.kpa = String(bestKpa);
     }
     if (state.tab === "guide") {
@@ -1070,7 +1337,15 @@
     });
   });
 
+  function syncGeneratorFields() {
+    const kind = document.getElementById("gen-kind").value;
+    document.getElementById("field-kpa").classList.toggle("hidden", !(kind === "porousdiff" || kind === "felt"));
+    document.getElementById("field-eps").classList.toggle("hidden", kind === "porousdiff" || kind === "cube");
+  }
+  document.getElementById("gen-kind").addEventListener("change", syncGeneratorFields);
+
   document.querySelectorAll('input[name="dispMode"]').forEach(r => r.addEventListener("change", (e) => { state.dispMode = e.target.value; renderAll(); }));
+  document.querySelectorAll('input[name="planeMode"]').forEach(r => r.addEventListener("change", (e) => { state.planeMode = e.target.value; renderPrimarySlice(); }));
   document.querySelectorAll('input[name="layerMode"]').forEach(r => r.addEventListener("change", (e) => { state.layerMode = e.target.value; renderPrimarySlice(); }));
   document.getElementById("inp-kpa").addEventListener("input", (e) => { document.getElementById("lbl-kpa").textContent = `${e.target.value} kPa`; });
   document.getElementById("inp-eps").addEventListener("input", (e) => { document.getElementById("lbl-eps").textContent = `${e.target.value}%`; });
@@ -1082,7 +1357,7 @@
     const side = parseInt(document.getElementById("inp-side").value, 10);
     const voxUm = parseFloat(document.getElementById("inp-vox").value) || 1.6;
     if (kind === "porousdiff") {
-      await runRealSynchrotronFelt(kpa);
+      await runRealSynchrotronFelt(kpa, side);
     } else {
       const names = {
         felt: `Custom Carbon Felt (${kpa} kPa)`,
@@ -1141,24 +1416,25 @@
     const z0 = Math.max(0, Math.min(ds.shape[0] - bz, zMid - Math.floor(bz / 2)));
 
     const raw = new Uint8Array(bz * bh * bw);
-    const sampleVals = [];
     for (let dz = 0; dz < bz; dz++) {
       const { slice, nx, ny } = await fetchDatasetSlice(dsKey, tpIdx, z0 + dz);
       for (let dy = 0; dy < bh; dy++) {
         for (let dx = 0; dx < bw; dx++) {
-          const v = slice[Math.min(ny - 1, y0 + dy) * nx + Math.min(nx - 1, x0 + dx)];
-          raw[dz * bh * bw + dy * bw + dx] = v;
-          if ((dx + dy + dz) % 3 === 0) sampleVals.push(v);
+          raw[dz * bh * bw + dy * bw + dx] = slice[Math.min(ny - 1, y0 + dy) * nx + Math.min(nx - 1, x0 + dx)];
         }
       }
     }
-    sampleVals.sort((a, b) => a - b);
-    const thr = dsKey === "dls_i12" ? sampleVals[Math.floor(sampleVals.length * 0.85)] : sampleVals[Math.floor(sampleVals.length * 0.55)];
-    const sub = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) sub[i] = raw[i] >= thr ? 1 : 0;
+    let sub;
+    if (dsKey === "dls_i12") {
+      sub = segmentCarbonFibres3D(raw, bz, bh, bw, 0.0);
+    } else {
+      const thr = otsuThresholdU8(raw);
+      sub = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) sub[i] = raw[i] >= thr ? 1 : 0;
+    }
 
     solveVolume(sub, bz, bh, bw, {
-      kind: "xray_roi",
+      kind: dsKey === "dls_i12" ? "porousdiff" : "xray_roi",
       label: `X-ray Region (${ds.tps[tpIdx].label})`,
       kpa: ds.tps[tpIdx].kpa || 150,
       voxUm: ds.voxUm
@@ -1194,7 +1470,7 @@
   ["cmp-left-tp", "cmp-right-tp"].forEach(id => document.getElementById(id).addEventListener("change", renderCompareView));
 
   document.getElementById("btn-run-suggested").addEventListener("click", async (e) => {
-    const kpa = parseFloat(e.currentTarget.dataset.kpa || "225");
+    const kpa = parseFloat(e.currentTarget.dataset.kpa || "220");
     document.getElementById("inp-kpa").value = String(kpa);
     document.getElementById("lbl-kpa").textContent = `${kpa} kPa`;
     await runRealSynchrotronFelt(kpa);
@@ -1245,7 +1521,7 @@
     if (!state.activeRun) return;
     const r = state.activeRun;
     const doc = {
-      hub_version: "0.4.1", label: r.label, shape_zyx: [r.nz, r.ny, r.nx], voxel_size_um: r.voxUm,
+      hub_version: "0.4.2", label: r.label, shape_zyx: [r.nz, r.ny, r.nx], voxel_size_um: r.voxUm,
       porosity: r.porosity, tortuosity_z: r.tau, effective_diffusivity_z: r.dEff,
       solid_wiring_z: r.sigmaZ, effective_modulus_gpa: r.eGpa, limiting_c_rate: r.cLim
     };
@@ -1268,10 +1544,17 @@
     a.download = `sample_${r.nx}x${r.ny}x${r.nz}.npy`; a.click();
   });
 
-  // Boot onto real DLS I12 synchrotron carbon-felt OME-Zarr (68, 451, 238 kPa)
+  // Instant boot onto 238 kPa real DLS I12 synchrotron felt (<120 ms), then pre-warm 68 & 451 kPa in background
+  syncGeneratorFields();
+  document.documentElement.setAttribute("data-theme", state.theme);
+  document.getElementById("theme-btn").textContent = state.theme === "dark" ? "Light mode" : "Dark mode";
   (async () => {
-    for (const k of [68, 451, 238]) await runRealSynchrotronFelt(k);
-    applyTheme(state.theme);
+    await runRealSynchrotronFelt(238, 48, true);
+    renderAll();
+    for (const k of [68, 451]) {
+      await runRealSynchrotronFelt(k, 48, false);
+    }
+    if (state.tab === "plan" || state.tab === "guide") renderPoresAndPlan();
   })();
 })();
 </script>

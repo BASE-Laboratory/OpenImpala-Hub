@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openimpala-hub"
-version = "0.4.1"
+version = "0.4.2"
 description = "Interactive web platform coupling 3D microstructure synthesis, OpenImpala transport & SMS mechanics solves, cell electrochemistry, volumetric visualisation, and autonomous experiment steering."
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -77,17 +77,21 @@ class RunRegistry:
         with self._lock:
             return [r.summary.to_dict() for r in self._runs.values()]
 
-    def warm_populate_defaults(self, *, shape: tuple[int, int, int] = (96, 96, 96)) -> None:
+    def warm_populate_defaults(self, *, shape: tuple[int, int, int] = (64, 64, 64)) -> None:
         """Pre-solve the initial 3-load DLS I12 synchrotron Carbon Felt sweep so page load is instant."""
         if self.boot_run_ids:
             return
         from ..contracts import MicrostructureSpec, SolveSpec
         from ..engine.generators import list_porousdiff_gallery
+        from ..engine.mechanics import has_sms_backend
 
+        want_sms = has_sms_backend() and max(shape) >= 48
         base_solve = SolveSpec(
             **{
                 **PRESETS["carbon_felt_compression"].solve.to_dict(),
                 "max_solve_side": max(16, int(max(shape))),
+                "compute_mechanics": want_sms,
+                "chemistry_preset": "vanadium_flow_felt",
             }
         )
         gallery = list_porousdiff_gallery()

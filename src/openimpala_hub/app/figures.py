@@ -528,7 +528,7 @@ def build_3d_isosurface_figure(
         clipped[iz0:iz1, iy0:iy1, ix0:ix1] = arr[iz0:iz1, iy0:iy1, ix0:ix1]
 
     traces: list[go.BaseTraceType] = []
-    phase_specs = [(1, "Solid Backbone (Phase 1)", "#64748b", float(opacity))]
+    phase_specs = [(1, "Solid Backbone (Phase 1)", "#9fb1c4", float(opacity))]
     if show_coating and np.any(clipped == 2):
         phase_specs.append((2, "Active Coating / CBD (Phase 2)", "#f59e0b", min(1.0, float(opacity) * 0.95)))
 
@@ -557,8 +557,9 @@ def build_3d_isosurface_figure(
                 name=pname,
                 color=color,
                 opacity=alpha,
-                flatshading=True,
-                lighting={"ambient": 0.55, "diffuse": 0.75, "specular": 0.25, "roughness": 0.6},
+                flatshading=False,
+                lighting={"ambient": 0.48, "diffuse": 0.80, "specular": 0.22, "roughness": 0.58},
+                lightposition={"x": 1800, "y": 1800, "z": 1400},
                 showlegend=True,
             )
         )
@@ -574,7 +575,7 @@ def build_3d_isosurface_figure(
                     (ry0 * orig_dy, ry1 * orig_dy),
                     (rx0 * orig_dx, rx1 * orig_dx),
                 ),
-                name=f"Zoom ROI #1 (|J|={roi.peak_flux_magnitude:.1f}x)",
+                name=f"Tightest throat (|J|={roi.peak_flux_magnitude:.1f}x)",
             )
         )
 
@@ -582,25 +583,32 @@ def build_3d_isosurface_figure(
         return empty_placeholder_figure(
             "No solid phase surfaces inside current clip box (open domain or empty clip range).",
             height=height,
-            dark_mode=dark_mode,
+            dark_mode=True,
         )
 
+    axis_color = "#E5DADA" if dark_mode else "#cbd5e1"
+    grid_color = "rgba(229, 218, 218, 0.22)"
     fig = go.Figure(data=traces)
     fig.update_layout(
-        title={
-            "text": f"3D Phase Isosurface & Synchrotron Zoom-ROI ({render_vol.shape[2]}×{render_vol.shape[1]}×{render_vol.shape[0]} render grid)",
-            "font": {"size": 14},
-        },
         height=height,
-        paper_bgcolor=tok["paper_bg"],
-        font={"color": tok["fg"]},
-        margin={"l": 10, "r": 10, "t": 44, "b": 10},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 0.01, "x": 0.01},
+        paper_bgcolor="#050608",
+        font={"color": axis_color, "size": 11.5},
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 0.02,
+            "x": 0.02,
+            "bgcolor": "rgba(5, 6, 8, 0.72)",
+            "font": {"color": axis_color, "size": 11},
+        },
         scene={
-            "xaxis": {"title": "x [µm]", "backgroundcolor": tok["plot_bg"], "gridcolor": tok["grid"]},
-            "yaxis": {"title": "y [µm]", "backgroundcolor": tok["plot_bg"], "gridcolor": tok["grid"]},
-            "zaxis": {"title": "z [µm]", "backgroundcolor": tok["plot_bg"], "gridcolor": tok["grid"]},
+            "xaxis": {"title": "X [µm]", "showbackground": False, "color": axis_color, "gridcolor": grid_color},
+            "yaxis": {"title": "Y [µm]", "showbackground": False, "color": axis_color, "gridcolor": grid_color},
+            "zaxis": {"title": "Z [µm]", "showbackground": False, "color": axis_color, "gridcolor": grid_color},
             "aspectmode": "data",
+            "camera": {"eye": {"x": 1.42, "y": 1.42, "z": 0.92}},
+            "bgcolor": "#050608",
         },
     )
     return fig
@@ -692,8 +700,8 @@ def build_gp_steering_figure(
         paper_bgcolor=tok["paper_bg"],
         plot_bgcolor=tok["plot_bg"],
         font={"color": tok["fg"]},
-        margin={"l": 56, "r": 28, "t": 48, "b": 46},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.05, "x": 0.0},
+        margin={"l": 56, "r": 28, "t": 72, "b": 46},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.12, "x": 0.0, "font": {"size": 11}},
     )
     fig.update_xaxes(gridcolor=tok["grid"])
     fig.update_yaxes(gridcolor=tok["grid"])
@@ -1110,6 +1118,49 @@ def build_operando_echem_figure(
         margin={"l": 46, "r": 12, "t": 12, "b": 34},
         xaxis={"title": "Cycling time [h]", "gridcolor": tok["grid"]},
         yaxis={"title": "Voltage [V]", "gridcolor": tok["grid"]},
+    )
+    return fig
+
+
+def build_compression_step_figure(
+    labels: list[str],
+    loads_kpa: list[float],
+    active_idx: int,
+    *,
+    height: int = 215,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Plot mechanical clamping load [kPa] across in-situ synchrotron compression steps."""
+    tok = _theme_tokens(dark_mode)
+    xs = list(range(len(loads_kpa)))
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=xs,
+            y=loads_kpa,
+            mode="lines+markers",
+            name="Clamping load (kPa)",
+            line={"color": tok["accent"], "width": 2.4},
+            marker={"size": 9, "color": tok["accent"]},
+        )
+    )
+    if 0 <= active_idx < len(loads_kpa):
+        fig.add_vline(x=float(active_idx), line_width=2, line_color=tok["cursor"])
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 11},
+        showlegend=False,
+        margin={"l": 50, "r": 14, "t": 12, "b": 34},
+        xaxis={
+            "title": "Synchrotron compression scan",
+            "tickmode": "array",
+            "tickvals": xs,
+            "ticktext": labels,
+            "gridcolor": tok["grid"],
+        },
+        yaxis={"title": "Clamping load [kPa]", "gridcolor": tok["grid"]},
     )
     return fig
 
