@@ -24,6 +24,7 @@ SourceKind = Literal[
     "user_upload",
 ]
 DirectionName = Literal["x", "y", "z"]
+ElectrodeRole = Literal["negative", "positive", "separator"]
 
 
 def _normalize_3f(val: float | Sequence[float]) -> tuple[float, float, float]:
@@ -69,8 +70,10 @@ class MicrostructureSpec:
     upload_path: str | None = None
     threshold: float | str | None = None
     dark_is_pore: bool = True
+    override_calibrated_spacing: bool = False
     coarsen_policy: Literal["crop_center", "mode_downsample", "error"] = "crop_center"
     roi_zyx: tuple[tuple[int, int], tuple[int, int], tuple[int, int]] | None = None
+    electrode_role: ElectrodeRole = "negative"
     phase_names: dict[int, str] = field(
         default_factory=lambda: {0: "pore", 1: "solid_backbone", 2: "active_coating"}
     )
@@ -86,6 +89,13 @@ class MicrostructureSpec:
                 raise ValueError(f"voxel_size_um must be strictly positive, got {vz}.")
             object.__setattr__(self, "voxel_size_um", vz)
         object.__setattr__(self, "anisotropy_zyx", _normalize_3f(self.anisotropy_zyx))
+        role = str(self.electrode_role).strip().lower()
+        if role not in ("negative", "positive", "separator"):
+            raise ValueError(
+                f"Unsupported electrode_role {self.electrode_role!r}; "
+                "expected 'negative', 'positive', or 'separator'."
+            )
+        object.__setattr__(self, "electrode_role", role)
         object.__setattr__(
             self,
             "phase_names",
@@ -103,9 +113,9 @@ class MicrostructureSpec:
         if "shape" in payload:
             payload["shape"] = tuple(int(x) for x in payload["shape"])
         if payload.get("voxel_size_um") is not None:
-            payload["voxel_size_um"] = tuple(float(x) for x in payload["voxel_size_um"])
+            payload["voxel_size_um"] = _normalize_3f(payload["voxel_size_um"])
         if "anisotropy_zyx" in payload:
-            payload["anisotropy_zyx"] = tuple(float(x) for x in payload["anisotropy_zyx"])
+            payload["anisotropy_zyx"] = _normalize_3f(payload["anisotropy_zyx"])
         if payload.get("roi_zyx") is not None:
             payload["roi_zyx"] = tuple((int(a), int(b)) for a, b in payload["roi_zyx"])
         if "phase_names" in payload and isinstance(payload["phase_names"], Mapping):
@@ -124,9 +134,12 @@ class SolveSpec:
     solver: Literal["mlmg", "hypre", "scipy"] = "mlmg"
     compute_homogenisation: bool = False
     compute_solid_wiring: bool = True
+    compute_rev_study: bool = False
     return_fields: bool = True
     field_direction: DirectionName = "z"
     max_solve_side: int | None = None
+    r_cell_weights: tuple[float, float, float] = (0.58, 0.27, 0.15)
+    sigma_over_kappa_bulk: float = 16.0
 
     def __post_init__(self) -> None:
         dirs = tuple(str(d).lower() for d in self.directions)
@@ -135,6 +148,8 @@ class SolveSpec:
                 raise ValueError(f"Unsupported direction {d!r}; expected 'x', 'y', or 'z'.")
         object.__setattr__(self, "directions", dirs)
         object.__setattr__(self, "solid_phases", tuple(int(p) for p in self.solid_phases))
+        object.__setattr__(self, "r_cell_weights", _normalize_3f(self.r_cell_weights))
+        object.__setattr__(self, "sigma_over_kappa_bulk", float(self.sigma_over_kappa_bulk))
         if self.phase_diffusivities is not None:
             object.__setattr__(
                 self,
@@ -144,6 +159,7 @@ class SolveSpec:
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
+        out["r_cell_weights"] = list(self.r_cell_weights)
         if self.phase_diffusivities is not None:
             out["phase_diffusivities"] = {
                 str(k): float(v) for k, v in self.phase_diffusivities.items()
@@ -157,6 +173,8 @@ class SolveSpec:
             payload["directions"] = tuple(payload["directions"])
         if "solid_phases" in payload:
             payload["solid_phases"] = tuple(int(p) for p in payload["solid_phases"])
+        if "r_cell_weights" in payload and payload["r_cell_weights"] is not None:
+            payload["r_cell_weights"] = _normalize_3f(payload["r_cell_weights"])
         if payload.get("phase_diffusivities") is not None:
             payload["phase_diffusivities"] = {
                 int(k): float(v) for k, v in payload["phase_diffusivities"].items()
@@ -255,6 +273,10 @@ class SolveRunSummary:
     solve_time_s: float
     microstructure_spec: dict[str, Any]
     solve_spec: dict[str, Any]
+    electrode_role: ElectrodeRole = "negative"
+    rev_sizes_vox: list[int] | None = None
+    rev_deff_mean: list[float] | None = None
+    rev_deff_std: list[float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

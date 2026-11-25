@@ -41,6 +41,16 @@ def default_max_solve_side() -> int:
     return max(0, val)
 
 
+def clamp_effective_max_side(requested: int | None) -> int:
+    """Clamp caller-supplied `max_solve_side` so `0` or large values cannot bypass `HUB_MAX_SOLVE_SIDE`."""
+    env_cap = default_max_solve_side()
+    if env_cap <= 0:
+        return 0 if requested is None else max(0, int(requested))
+    if requested is None or int(requested) <= 0:
+        return env_cap
+    return min(int(requested), env_cap)
+
+
 def extract_phase_volume(source: Volume | VolumeSet, *, label_key: str = "phase") -> Volume:
     """Extract the integer `(z, y, x)` phase `Volume` from a `Volume` or `VolumeSet`."""
     if isinstance(source, VolumeSet):
@@ -140,7 +150,7 @@ def enforce_solve_grid_cap(
     policy: Literal["crop_center", "mode_downsample", "error"] = "crop_center",
 ) -> tuple[Volume, str | None]:
     """Bound a 3D `Volume` to `max_side` per axis if configured, preserving cell-centre coordinates."""
-    cap = default_max_solve_side() if max_side is None else int(max_side)
+    cap = clamp_effective_max_side(max_side)
     if cap <= 0 or all(s <= cap for s in vol.shape):
         return vol, None
 

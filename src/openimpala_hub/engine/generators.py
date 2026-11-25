@@ -209,6 +209,27 @@ def _binarize_uploaded_volume(
 ) -> tuple[Volume, str]:
     """Convert an uploaded Volume into an integer phase Volume while preserving axes."""
     arr = vol.data
+    thr_mode = threshold.strip().lower() if isinstance(threshold, str) else None
+
+    if thr_mode == "labels":
+        if not np.issubdtype(arr.dtype, np.integer):
+            raise ValueError(
+                f"Cannot treat floating-point volume ({arr.dtype.name}) directly as integer phase labels; "
+                "choose Otsu or Manual threshold."
+            )
+        int_arr = np.ascontiguousarray(arr, dtype=np.int32)
+        return (
+            Volume(
+                int_arr,
+                vol.axes,
+                space=vol.space,
+                centering=vol.centering,
+                label_names=vol.label_names or {0: "pore", 1: "solid"},
+                provenance=vol.provenance,
+            ),
+            f"integer phase labels ({arr.dtype.name})",
+        )
+
     if np.issubdtype(arr.dtype, np.integer) and threshold is None:
         unique_vals = np.unique(arr)
         if unique_vals.size <= 8:
@@ -225,7 +246,7 @@ def _binarize_uploaded_volume(
                 f"integer phase labels ({arr.dtype.name})",
             )
 
-    if threshold is None or (isinstance(threshold, str) and threshold.strip().lower() == "otsu"):
+    if threshold is None or thr_mode == "otsu":
         seg, thr_val = oi.binarize_otsu(
             arr,
             pore_value=0,
@@ -446,11 +467,14 @@ def _load_path_microstructure(
         if spec.roi_zyx is not None:
             (z0, z1), (y0, y1), (x0, x1) = spec.roi_zyx
             base_vol = base_vol[z0:z1, y0:y1, x0:x1]
-        if not base_vol.is_calibrated and spec.voxel_size_um is not None:
+        if (spec.override_calibrated_spacing or not base_vol.is_calibrated) and (
+            spec.voxel_size_um is not None
+        ):
             base_vol = base_vol.with_voxel_size_um(spec.voxel_size_um)
         return base_vol, origin, precision, orig_shape
 
-    with open_volume(path, voxel_size_um=spec.voxel_size_um) as lv:
+    init_vox_um = spec.voxel_size_um if spec.override_calibrated_spacing else None
+    with open_volume(path, voxel_size_um=init_vox_um) as lv:
         orig_shape = tuple(int(s) for s in lv.shape)
         if spec.roi_zyx is not None:
             (z0, z1), (y0, y1), (x0, x1) = spec.roi_zyx
@@ -473,6 +497,8 @@ def _load_path_microstructure(
     seg_vol, seg_desc = _binarize_uploaded_volume(
         raw_vol, threshold=spec.threshold, dark_is_pore=spec.dark_is_pore
     )
-    if not seg_vol.is_calibrated and spec.voxel_size_um is not None:
+    if (spec.override_calibrated_spacing or not seg_vol.is_calibrated) and (
+        spec.voxel_size_um is not None
+    ):
         seg_vol = seg_vol.with_voxel_size_um(spec.voxel_size_um)
     return seg_vol, origin, f"{default_precision} ({seg_desc})", orig_shape

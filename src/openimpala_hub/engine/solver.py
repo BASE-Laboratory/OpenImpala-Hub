@@ -126,27 +126,38 @@ def run_transport_pipeline(
         vf_cond = oi.volume_fraction(data_arg, phase=s_spec.conducting_phase)
         porosity = float(vf_cond.fraction)
 
-        # Cauchy-Crofton Specific Surface Area (pore <-> solid backbone & pore <-> active coating)
-        primary_solid = s_spec.solid_phases[0] if s_spec.solid_phases else 1
-        ssa_res = oi.specific_surface_area(
-            data_arg,
-            phase_a=s_spec.conducting_phase,
-            phase_b=primary_solid,
-            **vox_kw,
-        )
-        ssa_total = float(ssa_res.ssa_corrected)
-
-        active_ssa = ssa_total
-        if 2 in unique_phases and 2 in s_spec.solid_phases:
-            ssa_coat = oi.specific_surface_area(
+        # Cauchy-Crofton Specific Surface Area (safe even on single-phase or solid-conducting runs)
+        counter_phases = [p for p in unique_phases if p != s_spec.conducting_phase]
+        if counter_phases:
+            primary_other = next(
+                (p for p in s_spec.solid_phases if p in counter_phases),
+                counter_phases[0],
+            )
+            ssa_res = oi.specific_surface_area(
                 data_arg,
                 phase_a=s_spec.conducting_phase,
-                phase_b=2,
+                phase_b=primary_other,
                 **vox_kw,
             )
-            ssa_total += float(ssa_coat.ssa_corrected)
-            # Active electrochemical interface weights catalyst/CBD coating plus exposed carbon surface
-            active_ssa = float(ssa_coat.ssa_corrected) + 0.35 * float(ssa_res.ssa_corrected)
+            ssa_total = float(ssa_res.ssa_corrected)
+            active_ssa = ssa_total
+            if (
+                2 in counter_phases
+                and primary_other != 2
+                and 2 in s_spec.solid_phases
+            ):
+                ssa_coat = oi.specific_surface_area(
+                    data_arg,
+                    phase_a=s_spec.conducting_phase,
+                    phase_b=2,
+                    **vox_kw,
+                )
+                ssa_total += float(ssa_coat.ssa_corrected)
+                # Active electrochemical interface weights catalyst/CBD coating plus exposed carbon surface
+                active_ssa = float(ssa_coat.ssa_corrected) + 0.35 * float(ssa_res.ssa_corrected)
+        else:
+            ssa_total = 0.0
+            active_ssa = 0.0
 
         # Slice-by-slice through-thickness porosity profile along field_direction
         prof_res = oi.through_thickness_profile(
@@ -284,7 +295,40 @@ def run_transport_pipeline(
                 [round(float(h_res.tensor[r, c]), 6) for c in range(3)] for r in range(3)
             ]
 
-        # Build PyBaMM & Faraday BPX dictionaries directly from already-solved metrics (zero redundant PDE solves)
+        # Optional subvolume Representative Elementary Volume (REV) convergence study
+        rev_sizes_vox: list[int] | None = None
+        rev_deff_mean: list[float] | None = None
+        rev_deff_std: list[float] | None = None
+        if s_spec.compute_rev_study:
+            min_dim = int(min(capped_vol.shape))
+            if min_dim >= 12:
+                raw_sizes = sorted(
+                    {
+                        max(8, min_dim // 3),
+                        max(12, (2 * min_dim) // 3),
+                        min_dim,
+                    }
+                )
+                rev_res = oi.rev_study(
+                    data_arg,
+                    sizes=raw_sizes,
+                    phase=s_spec.conducting_phase,
+                    num_samples=3,
+                    solver="hypre" if solver_name == "hypre" else "flexgmres",
+                    **vox_kw,
+                )
+                ax_diag_idx = {"x": 0, "y": 1, "z": 2}[s_spec.field_direction]
+                rev_sizes_vox = [int(sz) for sz in rev_res.sizes]
+                rev_deff_mean = [
+                    round(float(rev_res.mean_diagonal[sz][ax_diag_idx]), 6)
+                    for sz in rev_res.sizes
+                ]
+                rev_deff_std = [
+                    round(float(rev_res.std_diagonal[sz][ax_diag_idx]), 6)
+                    for sz in rev_res.sizes
+                ]
+
+        # Build PyBaMM & Faraday BPX dictionaries dynamically from electrode_role
         pybamm_params: dict[str, object] = {}
         bpx_params: dict[str, object] = {}
         primary_dir = s_spec.field_direction
@@ -292,18 +336,26 @@ def run_transport_pipeline(
         dir_shapes = {"z": capped_vol.shape[0], "y": capped_vol.shape[1], "x": capped_vol.shape[2]}
         p_summary = directional.get(primary_dir)
 
-        pybamm_params["Negative electrode porosity"] = round(porosity, 6)
-        pybamm_params["Negative electrode thickness [m]"] = round(
+        role_map = {
+            "negative": "Negative electrode",
+            "positive": "Positive electrode",
+            "separator": "Separator",
+        }
+        role_prefix = role_map.get(micro_spec.electrode_role, "Negative electrode")
+        is_separator = micro_spec.electrode_role == "separator"
+
+        pybamm_params[f"{role_prefix} porosity"] = round(porosity, 6)
+        pybamm_params[f"{role_prefix} thickness [m]"] = round(
             float(dir_shapes[primary_dir]) * float(dir_axes_m[primary_dir]), 9
         )
         if p_summary and p_summary.bruggeman_exponent is not None:
-            pybamm_params["Negative electrode Bruggeman coefficient (electrolyte)"] = (
+            pybamm_params[f"{role_prefix} Bruggeman coefficient (electrolyte)"] = (
                 p_summary.bruggeman_exponent
             )
         solid_vf = round(1.0 - porosity, 6)
-        if solid_vf > 0.0:
-            pybamm_params["Negative electrode active material volume fraction"] = solid_vf
-            pybamm_params["Negative electrode specific surface area [m-1]"] = round(ssa_total, 2)
+        if solid_vf > 0.0 and not is_separator:
+            pybamm_params[f"{role_prefix} active material volume fraction"] = solid_vf
+            pybamm_params[f"{role_prefix} specific surface area [m-1]"] = round(ssa_total, 2)
 
         bpx_results = {
             d.upper(): {
@@ -312,9 +364,22 @@ def run_transport_pipeline(
             }
             for d, dt in directional.items()
         }
+        bpx_param_block: dict[str, object] = {
+            f"{role_prefix} porosity": round(porosity, 6),
+            f"{role_prefix} diffusivity ratio (through-plane)": (
+                p_summary.effective_diffusivity if p_summary else 0.0
+            ),
+        }
+        if not is_separator:
+            bpx_param_block[f"{role_prefix} active material volume fraction"] = solid_vf
+            bpx_param_block[f"{role_prefix} surface area to volume ratio [m-1]"] = round(
+                ssa_total, 2
+            )
+
         bpx_params = {
             "schema": "openimpala.bpx.v1",
             "sample_id": micro_spec.label,
+            "electrode_role": micro_spec.electrode_role,
             "openimpala": {
                 "version": oi.__version__,
                 "physics_type": "Diffusion",
@@ -333,16 +398,7 @@ def run_transport_pipeline(
                 "voxel_size_m": [dz_m, dy_m, dx_m],
                 "specific_surface_area": "m^-1",
             },
-            "bpx": {
-                "Parameter": {
-                    "Negative electrode porosity": round(porosity, 6),
-                    "Negative electrode active material volume fraction": solid_vf,
-                    "Negative electrode surface area to volume ratio [m-1]": round(ssa_total, 2),
-                    "Negative electrode diffusivity ratio (through-plane)": (
-                        p_summary.effective_diffusivity if p_summary else 0.0
-                    ),
-                }
-            },
+            "bpx": {"Parameter": bpx_param_block},
         }
 
     solve_time_s = time.perf_counter() - t_solve_start
@@ -381,11 +437,16 @@ def run_transport_pipeline(
         if micro_spec.source_kind in ("carbon_felt", "porousdiff_gallery")
         else 1.0
     )
+    w_ion, w_elec, w_kin = s_spec.r_cell_weights
     r_cell = compute_cell_resistance(
         d_eff_z=d_eff_z,
         sigma_eff_z=solid_sigma_z if solid_sigma_z > 0.0 else 0.015,
         active_area_m_inv=active_ssa if active_ssa > 0.0 else 1.0e5,
         thickness_ratio=thickness_ratio,
+        sigma_over_kappa_bulk=s_spec.sigma_over_kappa_bulk,
+        w_ion=w_ion,
+        w_elec=w_elec,
+        w_kin=w_kin,
     )
 
     summary = SolveRunSummary(
@@ -423,6 +484,10 @@ def run_transport_pipeline(
         solve_time_s=round(solve_time_s, 4),
         microstructure_spec=micro_spec.to_dict(),
         solve_spec=s_spec.to_dict(),
+        electrode_role=micro_spec.electrode_role,
+        rev_sizes_vox=rev_sizes_vox,
+        rev_deff_mean=rev_deff_mean,
+        rev_deff_std=rev_deff_std,
     )
 
     return ExecutedRun(

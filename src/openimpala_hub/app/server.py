@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 from typing import Any
 
@@ -12,8 +13,14 @@ import openimpala as oi
 
 from .. import __version__ as _HUB_VERSION
 from ..contracts import MicrostructureSpec, SolveSpec
+from ..engine.bridge import clamp_effective_max_side, default_max_solve_side
 from ..engine.bundle import build_report_bundle_bytes
 from ..engine.solver import SOLVER_LOCK, run_transport_pipeline
+from ..engine.uploads import (
+    inspect_staged_volume,
+    is_staged_upload_path,
+    stage_upload_bytes,
+)
 from ..presets import DEFAULT_PRESET_KEY, PRESETS
 from .callbacks import register_callbacks
 from .layout import build_hub_layout
@@ -55,6 +62,43 @@ def _register_api_routes(server: Flask, registry: RunRegistry) -> None:
             ]
         )
 
+    @server.post("/api/v1/upload")
+    def api_upload() -> tuple[Response, int] | Response:
+        try:
+            if "file" in request.files:
+                up = request.files["file"]
+                fname = up.filename or "upload.tif"
+                raw_bytes = up.read()
+            else:
+                body = request.get_json(silent=True) or {}
+                fname = str(body.get("filename", ""))
+                b64 = str(body.get("content_base64", ""))
+                if not fname or not b64:
+                    return (
+                        jsonify(
+                            {
+                                "error": "Supply multipart 'file' or JSON {'filename', 'content_base64'}.",
+                                "error_type": "ValueError",
+                            }
+                        ),
+                        400,
+                    )
+                if "," in b64:
+                    _, b64 = b64.split(",", 1)
+                raw_bytes = base64.b64decode(b64)
+
+            staged_path = stage_upload_bytes(raw_bytes, fname)
+            inspection = inspect_staged_volume(staged_path, display_name=fname)
+            return jsonify(
+                {
+                    "status": "staged",
+                    "upload_path": str(staged_path),
+                    "inspection": inspection,
+                }
+            )
+        except Exception as exc:
+            return jsonify({"error": str(exc), "error_type": type(exc).__name__}), 400
+
     @server.post("/api/v1/solve")
     def api_solve() -> tuple[Response, int] | Response:
         body: dict[str, Any] = request.get_json(silent=True) or {}
@@ -76,6 +120,43 @@ def _register_api_routes(server: Flask, registry: RunRegistry) -> None:
                 preset = PRESETS[DEFAULT_PRESET_KEY]
                 mspec = preset.microstructure
                 sspec = preset.solve
+
+            # Security guard 1: reject arbitrary host paths on user_upload over public REST
+            if mspec.source_kind == "user_upload":
+                if not is_staged_upload_path(mspec.upload_path):
+                    return (
+                        jsonify(
+                            {
+                                "error": (
+                                    "Refusing unverified upload_path on public API. "
+                                    "Stage volumes via POST /api/v1/upload first."
+                                ),
+                                "error_type": "PermissionError",
+                            }
+                        ),
+                        403,
+                    )
+
+            # Security guard 2: clamp synthetic generation shape & max_solve_side to HUB_MAX_SOLVE_SIDE
+            env_cap = default_max_solve_side()
+            if env_cap > 0 and mspec.source_kind in (
+                "open_cube",
+                "carbon_felt",
+                "gaussian_blobs",
+                "overlapping_spheres",
+                "multiphase_electrode",
+            ):
+                clamped_shape = tuple(min(int(s), env_cap) for s in mspec.shape)
+                if clamped_shape != mspec.shape:
+                    mspec = MicrostructureSpec(
+                        **{**mspec.to_dict(), "shape": clamped_shape}
+                    )
+
+            clamped_max_side = clamp_effective_max_side(sspec.max_solve_side)
+            if clamped_max_side != sspec.max_solve_side:
+                sspec = SolveSpec(
+                    **{**sspec.to_dict(), "max_solve_side": clamped_max_side}
+                )
 
             executed = run_transport_pipeline(mspec, sspec)
             registry.put(executed)

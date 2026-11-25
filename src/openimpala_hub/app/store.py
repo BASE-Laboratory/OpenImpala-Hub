@@ -46,6 +46,26 @@ class RunRegistry:
                 self._runs.move_to_end(run_id)
             return run
 
+    def get_or_rehydrate(
+        self,
+        run_id: str | None,
+        history: list[dict] | None = None,
+    ) -> ExecutedRun | None:
+        """Fetch `run_id` from memory, or re-execute from `history` specs if evicted from LRU."""
+        existing = self.get(run_id)
+        if existing is not None or not run_id or not history:
+            return existing
+        from ..contracts import MicrostructureSpec, SolveSpec
+
+        for item in history:
+            if item.get("run_id") == run_id and item.get("microstructure_spec"):
+                mspec = MicrostructureSpec.from_dict(item["microstructure_spec"])
+                sspec = SolveSpec.from_dict(item.get("solve_spec") or {})
+                rebuilt = run_transport_pipeline(mspec, sspec)
+                self.put(rebuilt)
+                return rebuilt
+        return None
+
     def list_summaries(self) -> list[dict]:
         with self._lock:
             return [r.summary.to_dict() for r in self._runs.values()]

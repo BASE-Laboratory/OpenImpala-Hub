@@ -50,13 +50,43 @@ def _build_parser() -> argparse.ArgumentParser:
         "--voxel-size-um",
         type=float,
         default=1.6,
-        help="Isotropic physical voxel spacing in micrometres when using --input (default: 1.6)",
+        help="Isotropic physical voxel spacing in micrometres when using uncalibrated --input (default: 1.6)",
+    )
+    p_run.add_argument(
+        "--voxel-spacing-zyx-um",
+        type=float,
+        nargs=3,
+        metavar=("DZ", "DY", "DX"),
+        default=None,
+        help="Explicit anisotropic physical voxel spacing (dz, dy, dx) in micrometres",
     )
     p_run.add_argument(
         "--clamping-kpa",
         type=float,
         default=None,
         help="Override clamping pressure [kPa] for the carbon_felt_compression preset",
+    )
+    p_run.add_argument(
+        "--conducting-phase",
+        type=int,
+        default=None,
+        help="Override conducting phase ID (e.g. 0 for pore, 1 for solid)",
+    )
+    p_run.add_argument(
+        "--electrode-role",
+        choices=("negative", "positive", "separator"),
+        default=None,
+        help="Override continuum electrode role for PyBaMM / Faraday BPX export",
+    )
+    p_run.add_argument(
+        "--bright-is-pore",
+        action="store_true",
+        help="Treat bright intensities (> threshold) as pore (0) when thresholding greyscale --input",
+    )
+    p_run.add_argument(
+        "--rev-study",
+        action="store_true",
+        help="Run a subvolume Representative Elementary Volume (REV) convergence check",
     )
     p_run.add_argument(
         "--solver",
@@ -103,6 +133,7 @@ def _cmd_presets(args: argparse.Namespace) -> int:
             "badge": p.badge,
             "summary": p.summary,
             "source_kind": p.microstructure.source_kind,
+            "electrode_role": p.microstructure.electrode_role,
             "shape": list(p.microstructure.shape),
         }
         for p in PRESETS.values()
@@ -118,14 +149,33 @@ def _cmd_presets(args: argparse.Namespace) -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     if args.input_path:
         p = Path(args.input_path).resolve()
+        if args.voxel_spacing_zyx_um is not None:
+            vz = (
+                float(args.voxel_spacing_zyx_um[0]),
+                float(args.voxel_spacing_zyx_um[1]),
+                float(args.voxel_spacing_zyx_um[2]),
+            )
+            override_cal = True
+        else:
+            vz = (args.voxel_size_um, args.voxel_size_um, args.voxel_size_um)
+            override_cal = False
         mspec = MicrostructureSpec(
             source_kind="user_upload",
             label=p.name,
             upload_path=str(p),
-            voxel_size_um=(args.voxel_size_um, args.voxel_size_um, args.voxel_size_um),
-            threshold="otsu",
+            voxel_size_um=vz,
+            override_calibrated_spacing=override_cal,
+            threshold=None,
+            dark_is_pore=not bool(args.bright_is_pore),
+            electrode_role=args.electrode_role or "negative",
         )
-        sspec = SolveSpec(solver=args.solver or "mlmg")
+        cond_id = int(args.conducting_phase) if args.conducting_phase is not None else 0
+        sspec = SolveSpec(
+            conducting_phase=cond_id,
+            solid_phases=(0,) if cond_id == 1 else (1, 2),
+            solver=args.solver or "mlmg",
+            compute_rev_study=bool(args.rev_study),
+        )
     else:
         preset = PRESETS[args.preset]
         mspec = preset.microstructure
@@ -135,9 +185,24 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 shape=mspec.shape,
                 seed=mspec.seed,
             )
+        m_overrides: dict[str, object] = {}
+        if args.voxel_spacing_zyx_um is not None:
+            m_overrides["voxel_size_um"] = tuple(float(x) for x in args.voxel_spacing_zyx_um)
+        if args.electrode_role is not None:
+            m_overrides["electrode_role"] = args.electrode_role
+        if m_overrides:
+            mspec = MicrostructureSpec(**{**mspec.to_dict(), **m_overrides})  # type: ignore[arg-type]
+
         sspec = preset.solve
+        s_overrides: dict[str, object] = {}
         if args.solver is not None:
-            sspec = SolveSpec(**{**sspec.to_dict(), "solver": args.solver})  # type: ignore[arg-type]
+            s_overrides["solver"] = args.solver
+        if args.conducting_phase is not None:
+            s_overrides["conducting_phase"] = int(args.conducting_phase)
+        if args.rev_study:
+            s_overrides["compute_rev_study"] = True
+        if s_overrides:
+            sspec = SolveSpec(**{**sspec.to_dict(), **s_overrides})  # type: ignore[arg-type]
 
     executed = run_transport_pipeline(mspec, sspec)
     if args.output_bundle:
