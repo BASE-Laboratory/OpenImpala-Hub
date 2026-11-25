@@ -13,6 +13,7 @@ dist/
 /runs/
 *.ome.zarr/
 !data/porousdiff/*.ome.zarr/
+!data/porousdiff/*.ome.zarr/**
 !docs_site/data/*.ome.zarr/
 !docs_site/data/*.ome.zarr/**
 *.webm

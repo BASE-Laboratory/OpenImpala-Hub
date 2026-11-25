@@ -1,0 +1,124 @@
+{
+    "basecoat_axes_by_level": {
+        "0": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 0.0,
+                "scale": 2.0,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 0.0,
+                "scale": 2.0,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 0.0,
+                "scale": 2.0,
+                "unit": "um"
+            }
+        ],
+        "1": [
+            {
+                "kind": "space",
+                "name": "z",
+                "offset": 1.0,
+                "scale": 4.0,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "y",
+                "offset": 1.0,
+                "scale": 4.0,
+                "unit": "um"
+            },
+            {
+                "kind": "space",
+                "name": "x",
+                "offset": 1.0,
+                "scale": 4.0,
+                "unit": "um"
+            }
+        ]
+    },
+    "basecoat_centering": "cell",
+    "basecoat_provenance": {
+        "basecoat_version": "0.3.0",
+        "crop_yx": [
+            160,
+            416,
+            300,
+            556
+        ],
+        "data_origin": "benchmark_xct",
+        "dataset": "binarised_nlm25",
+        "git_sha": "438405c05580",
+        "written_at_utc": "2026-11-25T20:44:23.308452+00:00"
+    },
+    "multiscales": [
+        {
+            "axes": [
+                {
+                    "name": "z",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "y",
+                    "type": "space",
+                    "unit": "micrometer"
+                },
+                {
+                    "name": "x",
+                    "type": "space",
+                    "unit": "micrometer"
+                }
+            ],
+            "datasets": [
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                2.0,
+                                2.0,
+                                2.0
+                            ],
+                            "type": "scale"
+                        }
+                    ],
+                    "path": "0"
+                },
+                {
+                    "coordinateTransformations": [
+                        {
+                            "scale": [
+                                4.0,
+                                4.0,
+                                4.0
+                            ],
+                            "type": "scale"
+                        },
+                        {
+                            "translation": [
+                                1.0,
+                                1.0,
+                                1.0
+                            ],
+                            "type": "translation"
+                        }
+                    ],
+                    "path": "1"
+                }
+            ],
+            "name": "nlm25_dendritic_xct",
+            "type": "block_mean",
+            "version": "0.4"
+        }
+    ]
+}

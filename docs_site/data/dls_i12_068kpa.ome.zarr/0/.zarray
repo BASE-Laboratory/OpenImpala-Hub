@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    16,
+    192,
+    192
+  ],
+  "compressor": {
+    "id": "zlib",
+    "level": 6
+  },
+  "dimension_separator": "/",
+  "dtype": "|u1",
+  "fill_value": 0,
+  "filters": null,
+  "order": "C",
+  "shape": [
+    128,
+    192,
+    192
+  ],
+  "zarr_format": 2
+}

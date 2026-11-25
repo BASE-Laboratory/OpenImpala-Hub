@@ -158,10 +158,11 @@ def test_browser_v04_baselab_signature_porousdiff_xray_and_downloads(tmp_path: P
 
 
 def test_static_github_pages_ome_zarr_http_chunk_streaming() -> None:
-    """Serve `docs_site/` over HTTP and verify `DecompressionStream('deflate')` OME-Zarr chunk reads."""
+    """Serve `docs_site/` over HTTP and verify `DecompressionStream('deflate')` real synchrotron OME-Zarr chunk reads."""
     playwright = pytest.importorskip("playwright.sync_api")
     docs_dir = Path(__file__).resolve().parents[1] / "docs_site"
-    assert (docs_dir / "data" / "t1_7p5h.ome.zarr" / "0" / ".zarray").is_file()
+    assert (docs_dir / "data" / "dls_i12_451kpa.ome.zarr" / "0" / ".zarray").is_file()
+    assert (docs_dir / "data" / "dls_i13_zn13x_capillary.ome.zarr" / "0" / ".zarray").is_file()
 
     port = _free_port()
     handler = partial(SimpleHTTPRequestHandler, directory=str(docs_dir))
@@ -181,12 +182,15 @@ def test_static_github_pages_ome_zarr_http_chunk_streaming() -> None:
             page.on("pageerror", lambda err: js_errors.append(str(err)))
 
             page.goto(f"http://127.0.0.1:{port}/", wait_until="networkidle")
-            assert "Open pore space" in page.locator("#results-table").inner_text()
+            page.wait_for_function(
+                "() => document.querySelector('#results-table')?.innerText.includes('Open pore space')",
+                timeout=10000,
+            )
 
-            # Switch to X-ray Scans -> triggers real HTTP fetch('./data/t1_7p5h.ome.zarr/0/3/0/0')
+            # Switch to X-ray Scans -> triggers real HTTP fetch('./data/dls_i12_451kpa.ome.zarr/0/4/0/0')
             page.locator("#source-bar").get_by_text("X-ray Scans").click()
             page.wait_for_function(
-                "() => (document.querySelector('#tech-readout')?.textContent || '').includes('OME-Zarr chunk ./data/t1_7p5h.ome.zarr')",
+                "() => (document.querySelector('#tech-readout')?.textContent || '').includes('OME-Zarr chunk ./data/dls_i12_451kpa.ome.zarr/0/')",
                 timeout=10000,
             )
 

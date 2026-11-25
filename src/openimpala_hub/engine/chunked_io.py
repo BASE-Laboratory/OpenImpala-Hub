@@ -696,6 +696,21 @@ def extract_native_roi_volume(
     if mode == "manual" and manual_threshold is not None:
         thr = float(manual_threshold)
         seg = np.where(raw <= thr, 0, 1) if dark_is_pore else np.where(raw > thr, 0, 1)
+    elif "dls_i12" in Path(path_str).name.lower():
+        from scipy.ndimage import binary_closing, gaussian_filter
+
+        bg = gaussian_filter(raw, sigma=(0.0, 14.0, 14.0))
+        delta = raw - bg
+        pos = delta[delta > np.percentile(delta, 50.0)]
+        thr_d = float(np.median(pos)) if pos.size else 0.0
+        for _ in range(5):
+            lo_p = pos[pos <= thr_d]
+            hi_p = pos[pos > thr_d]
+            if lo_p.size == 0 or hi_p.size == 0:
+                break
+            thr_d = 0.5 * float(lo_p.mean() + hi_p.mean())
+        seg = binary_closing(delta > thr_d, iterations=1).astype(np.int32)
+        thr = float(np.median(raw) + thr_d)
     elif mode == "otsu":
         seg, thr_val = oi.binarize_otsu(
             raw, pore_value=0, solid_value=1, dark_is_pore=dark_is_pore
@@ -705,7 +720,13 @@ def extract_native_roi_volume(
         ref = pristine_ref_path or path_str
         circ = fit_reference_circle(ref)
         thr = _low_atten_threshold(ref, circ)
-        seg = np.where(raw <= thr, 0, 1) if dark_is_pore else np.where(raw > thr, 0, 1)
+        if thr <= float(raw.min()) or thr >= float(raw.max()):
+            seg, thr_val = oi.binarize_otsu(
+                raw, pore_value=0, solid_value=1, dark_is_pore=dark_is_pore
+            )
+            thr = float(thr_val)
+        else:
+            seg = np.where(raw <= thr, 0, 1) if dark_is_pore else np.where(raw > thr, 0, 1)
 
     if isinstance(voxel_size_um, (int, float)):
         vz = vy = vx = float(voxel_size_um)

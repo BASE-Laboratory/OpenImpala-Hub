@@ -66,9 +66,9 @@ def run_optional_mechanics(
     bulk_youngs_modulus_gpa: float = 12.0,
     poisson_ratio: float = 0.28,
     applied_strain: float = -1.0e-3,
-    max_mechanics_side: int = 32,
+    max_mechanics_side: int = 24,
     rtol: float = 8.0e-4,
-    max_iter: int = 650,
+    max_iter: int = 450,
 ) -> tuple[MechanicsSummary | None, np.ndarray | None]:
     """Execute `sms.effective_modulus` if installed, returning `(MechanicsSummary, vm_mpa_zyx)`."""
     if not has_sms_backend():

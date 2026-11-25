@@ -170,7 +170,7 @@
 <div class="hub-shell">
   <header class="hub-topbar">
     <a class="hub-brand" href="https://jameslehoux.com/" target="_blank" rel="noopener">
-      <img id="brand-logo" src="./assets/baselab_logo.png" alt="BASE Lab" />
+      <img id="brand-logo" src="./assets/baselab_logo.png" onerror="this.onerror=null;this.src='https://base-laboratory.github.io/OpenImpala-Hub/assets/baselab_logo.png';" alt="BASE Lab" />
       <span>BASE LAB · OPENIMPALA HUB</span>
     </a>
     <nav class="hub-nav" id="top-nav">
@@ -194,7 +194,7 @@
         <span>Sample source</span>
         <details class="info-icon info-left">
           <summary>i</summary>
-          <div class="info-pop">Generate a synthetic or PorousDiff 3D electrode, stream 4D X-ray scans from OME-Zarr chunks, or upload your own raw binary / NPY volume.</div>
+          <div class="info-pop">Simulate real Diamond I12 synchrotron carbon felt or PorousDiff structures, stream real 3D/4D synchrotron OME-Zarr scans, or upload your own volume.</div>
         </details>
       </div>
 
@@ -207,18 +207,18 @@
       <!-- Mode 1: Generate -->
       <div id="panel-generate">
         <div class="field">
-          <div class="field-head"><span>Generator</span></div>
+          <div class="field-head"><span>Generator / Baseline</span></div>
           <select id="gen-kind">
-            <option value="porousdiff">PorousDiff AI · Carbon felt</option>
-            <option value="felt">Custom carbon felt (fibres + coating)</option>
+            <option value="porousdiff">DLS I12 / PorousDiff · Carbon felt (real XCT)</option>
+            <option value="felt">Custom carbon felt (synthetic fibres + coating)</option>
             <option value="cathode">Custom 3-phase battery cathode</option>
             <option value="spheres">Sphere packing</option>
             <option value="cube">Straight-channel test cube (exact check)</option>
           </select>
         </div>
         <div class="field" id="field-kpa">
-          <div class="field-head"><span>Compression load</span><span class="readout" id="lbl-kpa">150 kPa</span></div>
-          <input type="range" id="inp-kpa" min="0" max="500" step="10" value="150" />
+          <div class="field-head"><span>Compression load</span><span class="readout" id="lbl-kpa">238 kPa</span></div>
+          <input type="range" id="inp-kpa" min="0" max="500" step="10" value="238" />
         </div>
         <div class="field" id="field-eps">
           <div class="field-head"><span>Target pore space</span><span class="readout" id="lbl-eps">76%</span></div>
@@ -228,14 +228,14 @@
           <div>
             <div class="field-head"><span>Volume size</span></div>
             <select id="inp-side">
-              <option value="24">24 x 24 x 24</option>
-              <option value="32" selected>32 x 32 x 32</option>
-              <option value="40">40 x 40 x 40</option>
+              <option value="32">32 x 32 x 32</option>
+              <option value="48" selected>48 x 48 x 48</option>
+              <option value="64">64 x 64 x 64</option>
             </select>
           </div>
           <div>
             <div class="field-head"><span>Pixel (µm)</span></div>
-            <input type="number" id="inp-vox" value="1.6" min="0.2" max="20" step="0.2" />
+            <input type="number" id="inp-vox" value="1.6" min="0.2" max="20" step="any" />
           </div>
         </div>
         <button class="btn btn-primary" id="btn-run-gen">Generate &amp; simulate sample</button>
@@ -245,12 +245,14 @@
         </div>
       </div>
 
-      <!-- Mode 2: X-ray Scans (OME-Zarr v0.4 HTTP Chunk Streaming) -->
+      <!-- Mode 2: X-ray Scans (Real Synchrotron & Micro-CT OME-Zarr v0.4 Streaming) -->
       <div id="panel-xray" class="hidden">
         <div class="field">
           <div class="field-head"><span>Dataset</span></div>
           <select id="xray-ds">
-            <option value="ag05">Silver interlayer cell (Ag05 · OME-Zarr v0.4)</option>
+            <option value="dls_i12">DLS I12 Virgin Carbon Felt · Compression (1.6 µm)</option>
+            <option value="dls_i13">DLS I13-2 Zeolite 13X Capillary + Ruby (3.25 µm)</option>
+            <option value="nlm25">Dendritic Electrode Micro-CT (nlm25, 2.0 µm)</option>
           </select>
         </div>
         <div class="field">
@@ -261,28 +263,28 @@
             <option value="viridis">Viridis</option>
           </select>
         </div>
-        <div class="field">
-          <div class="field-head"><span>Time in cycle</span><span class="readout" id="lbl-xray-tp">7.5h after 1st plating</span></div>
-          <input type="range" id="inp-xray-tp" min="0" max="3" step="1" value="1" />
+        <div class="field" id="xray-tp-wrap">
+          <div class="field-head"><span>Compression / Scan state</span><span class="readout" id="lbl-xray-tp">451 kPa (0.053 mV/V)</span></div>
+          <input type="range" id="inp-xray-tp" min="0" max="2" step="1" value="2" />
         </div>
         <div class="field">
-          <div class="field-head"><span>Slice depth (Z)</span><span class="readout" id="lbl-xray-z">25 of 31</span></div>
-          <input type="range" id="inp-xray-z" min="0" max="31" step="1" value="25" />
+          <div class="field-head"><span>Slice depth (Z)</span><span class="readout" id="lbl-xray-z">64 of 127</span></div>
+          <input type="range" id="inp-xray-z" min="0" max="127" step="1" value="64" />
         </div>
         <div class="sec-heading" style="margin-top:14px;">
           <span>Selected region</span>
           <details class="info-icon info-left">
             <summary>i</summary>
-            <div class="info-pop">Select a sub-box around the plating crack (cyan box) to extract 1x1x1 voxels from the OME-Zarr chunks and solve 3D ion flow directly in your browser.</div>
+            <div class="info-pop">Select a sub-box (cyan rectangle) to stream 1x1x1 voxels from the OME-Zarr chunks and solve 3D ion flow directly in your browser.</div>
           </details>
         </div>
         <div class="field">
-          <div class="field-head"><span>Region X centre</span><span class="readout" id="lbl-roi-box">24 x 24 x 16 px</span></div>
-          <input type="range" id="inp-roi-cx" min="16" max="64" step="2" value="55" />
+          <div class="field-head"><span>Region X centre</span><span class="readout" id="lbl-roi-box">48 x 48 x 24 px</span></div>
+          <input type="range" id="inp-roi-cx" min="28" max="164" step="2" value="96" />
         </div>
         <div class="field">
           <div class="field-head"><span>Region Y centre</span></div>
-          <input type="range" id="inp-roi-cy" min="16" max="64" step="2" value="40" />
+          <input type="range" id="inp-roi-cy" min="28" max="164" step="2" value="96" />
         </div>
         <button class="btn btn-primary" id="btn-sim-roi">Simulate this region</button>
       </div>
@@ -331,7 +333,7 @@
           <span id="slice-cap-right" class="mono"></span>
         </div>
         <div id="sim-z-wrap" style="width:100%;max-width:660px;margin-top:10px;">
-          <input type="range" id="inp-sim-slice" min="0" max="31" value="16" />
+          <input type="range" id="inp-sim-slice" min="0" max="47" value="24" />
         </div>
       </div>
 
@@ -353,7 +355,7 @@
       <!-- COMPARE -->
       <div id="view-compare" class="hidden">
         <div class="sec-heading">
-          <span>Side-by-side X-ray cycling comparison</span>
+          <span>Side-by-side DLS I12 synchrotron compression comparison</span>
           <label style="font-family:Montserrat,sans-serif;font-size:12px;font-weight:600;">
             <input type="checkbox" id="cmp-link-z" checked /> Link slice sliders
           </label>
@@ -361,23 +363,21 @@
         <div class="compare-grid">
           <div>
             <select id="cmp-left-tp">
-              <option value="0" selected>0h pristine</option>
-              <option value="1">7.5h after 1st plating</option>
-              <option value="2">15h after 1st stripping</option>
-              <option value="3">20h after 2nd plating</option>
+              <option value="0" selected>68 kPa (0.008 mV/V)</option>
+              <option value="1">238 kPa (0.028 mV/V)</option>
+              <option value="2">451 kPa (0.053 mV/V)</option>
             </select>
-            <input type="range" id="cmp-left-z" min="0" max="31" value="25" style="margin:8px 0;" />
+            <input type="range" id="cmp-left-z" min="0" max="127" value="64" style="margin:8px 0;" />
             <div class="micrograph-frame"><canvas id="cmp-left-canvas" width="400" height="400"></canvas></div>
             <div id="cmp-left-cap" class="mono" style="font-size:11.5px;margin-top:6px;color:var(--ink-muted);"></div>
           </div>
           <div>
             <select id="cmp-right-tp">
-              <option value="0">0h pristine</option>
-              <option value="1" selected>7.5h after 1st plating</option>
-              <option value="2">15h after 1st stripping</option>
-              <option value="3">20h after 2nd plating</option>
+              <option value="0">68 kPa (0.008 mV/V)</option>
+              <option value="1">238 kPa (0.028 mV/V)</option>
+              <option value="2" selected>451 kPa (0.053 mV/V)</option>
             </select>
-            <input type="range" id="cmp-right-z" min="0" max="31" value="25" style="margin:8px 0;" />
+            <input type="range" id="cmp-right-z" min="0" max="127" value="64" style="margin:8px 0;" />
             <div class="micrograph-frame"><canvas id="cmp-right-canvas" width="400" height="400"></canvas></div>
             <div id="cmp-right-cap" class="mono" style="font-size:11.5px;margin-top:6px;color:var(--ink-muted);"></div>
           </div>
@@ -393,7 +393,7 @@
             <canvas id="pores-discharge-canvas" width="480" height="300" style="width:100%;border:1.5px solid var(--rule-strong);background:var(--well-bg);"></canvas>
           </div>
           <div>
-            <div style="font-weight:600;margin-bottom:6px;">Pore connectivity &amp; chord length distribution</div>
+            <div style="font-weight:600;margin-bottom:6px;">Pore connectivity &amp; solid fraction</div>
             <canvas id="pores-morph-canvas" width="480" height="300" style="width:100%;border:1.5px solid var(--rule-strong);background:var(--well-bg);"></canvas>
           </div>
         </div>
@@ -432,7 +432,7 @@
         <span>Simulation results</span>
         <details class="info-icon">
           <summary>i</summary>
-          <div class="info-pop">Properties solved directly on the 3D voxel grid. Pathway tortuosity = 1.0 means straight unobstructed channels; higher numbers indicate longer detours around solid particles.</div>
+          <div class="info-pop">Properties solved directly on the 3D voxel grid. Pathway tortuosity = 1.0 means straight unobstructed channels; higher numbers indicate longer detours around solid fibres/particles.</div>
         </details>
       </div>
       <div id="sample-subtitle" style="font-size:11.5px;color:var(--ink-muted);margin-bottom:8px;"></div>
@@ -444,7 +444,7 @@
       </div>
 
       <div id="right-xray-box" class="hidden">
-        <div class="sec-heading"><span>Cell voltage during cycling</span></div>
+        <div class="sec-heading"><span>Cell voltage across compression steps</span></div>
         <canvas id="right-echem-canvas" width="380" height="190" style="width:100%;border:1px solid var(--rule-soft);background:var(--well-bg);"></canvas>
       </div>
     </aside>
@@ -453,12 +453,43 @@
 
 <script>
 (() => {
-  const ZARR_TPS = [
-    { store: "t0_0h.ome.zarr", label: "0h pristine", t_h: 0.0, drop: 0.0, sev: 0.0 },
-    { store: "t1_7p5h.ome.zarr", label: "7.5h after 1st plating", t_h: 7.5, drop: 38.0, sev: 1.0 },
-    { store: "t2_15h.ome.zarr", label: "15h after 1st stripping", t_h: 15.0, drop: 14.0, sev: 0.4 },
-    { store: "t3_20h.ome.zarr", label: "20h after 2nd plating", t_h: 20.0, drop: 46.0, sev: 1.25 }
-  ];
+  const XRAY_DATASETS = {
+    dls_i12: {
+      label: "DLS I12 Virgin Carbon Felt",
+      shape: [128, 192, 192],
+      chunks: [16, 192, 192],
+      voxUm: 1.6,
+      roiBox: [48, 48, 24],
+      brightSolid: true,
+      tps: [
+        { store: "dls_i12_068kpa.ome.zarr", label: "68 kPa (0.008 mV/V)", t_h: 0.5, kpa: 68 },
+        { store: "dls_i12_238kpa.ome.zarr", label: "238 kPa (0.028 mV/V)", t_h: 1.5, kpa: 238 },
+        { store: "dls_i12_451kpa.ome.zarr", label: "451 kPa (0.053 mV/V)", t_h: 2.5, kpa: 451 }
+      ]
+    },
+    dls_i13: {
+      label: "DLS I13-2 Zeolite 13X Capillary + Ruby",
+      shape: [48, 400, 400],
+      chunks: [8, 400, 400],
+      voxUm: 3.25,
+      roiBox: [64, 64, 16],
+      brightSolid: true,
+      tps: [
+        { store: "dls_i13_zn13x_capillary.ome.zarr", label: "Scan 169067 (Green et al. 2025)", t_h: 1.5, kpa: 0 }
+      ]
+    },
+    nlm25: {
+      label: "Dendritic Electrode Micro-CT (nlm25)",
+      shape: [128, 256, 256],
+      chunks: [16, 256, 256],
+      voxUm: 2.0,
+      roiBox: [56, 56, 24],
+      brightSolid: true,
+      tps: [
+        { store: "nlm25_dendritic_xct.ome.zarr", label: "Slices 850–977 (256x256)", t_h: 1.5, kpa: 0 }
+      ]
+    }
+  };
 
   const state = {
     theme: localStorage.getItem("oi_hub_theme") || "light",
@@ -470,7 +501,7 @@
     activeRun: null,
     history: [],
     chunkCache: new Map(),
-    lastChunkInfo: "Static browser solver ready",
+    lastChunkInfo: "Ready",
     uploadedVol: null
   };
 
@@ -482,7 +513,6 @@
     renderAll();
   }
 
-  // Deterministic PRNG (Mulberry32)
   function mulberry32(a) {
     return function() {
       let t = a += 0x6D2B79F5;
@@ -492,7 +522,6 @@
     };
   }
 
-  // Colormaps
   function cmapRGB(val01, name) {
     const v = Math.max(0, Math.min(1, val01));
     if (name === "magma") {
@@ -513,18 +542,15 @@
     return [g, g, g];
   }
 
-  // Real HTTP OME-Zarr v0.4 zlib chunk fetcher with procedural offline fallback
-  async function fetchZarrSlice(tpIdx, zIdx) {
-    const tp = ZARR_TPS[Math.max(0, Math.min(ZARR_TPS.length - 1, tpIdx))];
-    const zc = Math.max(0, Math.min(31, zIdx));
-    const chunkZ = Math.floor(zc / 8);
-    const localZ = zc % 8;
-    const key = `${tp.store}/0/${chunkZ}/0/0`;
-
+  async function fetchZarrChunk(storeName, level, chunkZ, fallbackBytes) {
+    const key = `${storeName}/${level}/${chunkZ}/0/0`;
     if (!state.chunkCache.has(key)) {
       const t0 = performance.now();
       try {
-        const resp = await fetch(`./data/${key}`);
+        const base = window.location.protocol === "file:"
+          ? "https://base-laboratory.github.io/OpenImpala-Hub/data"
+          : "./data";
+        const resp = await fetch(`${base}/${key}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const compBuf = await resp.arrayBuffer();
         const compBytes = compBuf.byteLength;
@@ -535,42 +561,73 @@
         const dt = (performance.now() - t0).toFixed(1);
         state.lastChunkInfo = `OME-Zarr chunk ./data/${key} (${(compBytes / 1024).toFixed(1)} KB zlib -> ${(u8.byteLength / 1024).toFixed(0)} KB in ${dt} ms)`;
       } catch (_err) {
-        // Fallback procedural 8x80x80 chunk when opened directly via file://
-        const u8 = buildFallbackChunk(tp, chunkZ);
+        const u8 = new Uint8Array(fallbackBytes);
+        const rng = mulberry32(2026 + chunkZ * 31);
+        for (let i = 0; i < fallbackBytes; i++) u8[i] = rng() > 0.86 ? 215 : Math.round(65 + rng() * 40);
         state.chunkCache.set(key, u8);
-        state.lastChunkInfo = `Inline OME-Zarr fallback chunk ${key} (8 x 80 x 80 uint8)`;
+        state.lastChunkInfo = `Offline fallback chunk ${key}`;
       }
     }
-    const chunk = state.chunkCache.get(key);
-    const offset = localZ * 80 * 80;
-    return chunk.subarray(offset, offset + 80 * 80);
+    return state.chunkCache.get(key);
   }
 
-  function buildFallbackChunk(tp, chunkZ) {
-    const out = new Uint8Array(8 * 80 * 80);
-    const rng = mulberry32(2026 + chunkZ * 31);
-    for (let lz = 0; lz < 8; lz++) {
-      const gz = chunkZ * 8 + lz;
-      const zProf = Math.exp(-0.5 * Math.pow((gz - 25) / 2.2, 2));
-      for (let y = 0; y < 80; y++) {
-        for (let x = 0; x < 80; x++) {
-          const r = Math.hypot(x - 40, y - 40);
-          if (gz < 2 || r > 33) { out[lz * 6400 + y * 80 + x] = 0; continue; }
-          let v = 178 + (rng() - 0.5) * 32 + (r > 28 ? 36 : 0) - tp.drop * zProf;
-          const c1 = Math.abs((y - 40) - 0.34 * (x - 56) - 2.0 * Math.sin(x * 0.28));
-          if (tp.sev > 0 && x > 43 && x < 69 && y > 27 && y < 53 && Math.abs(gz - 25) <= 5 && c1 < 1.2 * tp.sev) {
-            v = 24;
+  async function fetchDatasetSlice(dsKey, tpIdx, zIdx) {
+    const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
+    const tp = ds.tps[Math.max(0, Math.min(ds.tps.length - 1, tpIdx))];
+    const [nz, ny, nx] = ds.shape;
+    const [cz, cy, cx] = ds.chunks;
+    const zc = Math.max(0, Math.min(nz - 1, zIdx));
+    const chunkZ = Math.floor(zc / cz);
+    const localZ = zc % cz;
+    const chunk = await fetchZarrChunk(tp.store, 0, chunkZ, cz * cy * cx);
+    const offset = localZ * ny * nx;
+    return { slice: chunk.subarray(offset, offset + ny * nx), ny, nx, tp, ds };
+  }
+
+  // Real DLS I12 synchrotron carbon-felt solver via level-1 multiscale OME-Zarr chunks (64 x 96 x 96 @ 3.2 um)
+  async function runRealSynchrotronFelt(kpa) {
+    const stores = [
+      { kpa: 68, store: "dls_i12_068kpa.ome.zarr" },
+      { kpa: 238, store: "dls_i12_238kpa.ome.zarr" },
+      { kpa: 451, store: "dls_i12_451kpa.ome.zarr" }
+    ];
+    let chosen = stores[0];
+    for (const s of stores) {
+      if (Math.abs(s.kpa - kpa) < Math.abs(chosen.kpa - kpa)) chosen = s;
+    }
+    // Load 4 middle level-1 chunks (z = 16..48 of 64, 64x64 XY crop -> 32 x 64 x 64 @ 3.2 um)
+    const nz = 32, ny = 64, nx = 64;
+    const raw = new Uint8Array(nz * ny * nx);
+    const vals = [];
+    for (let cIdx = 2; cIdx < 6; cIdx++) {
+      const ch = await fetchZarrChunk(chosen.store, 1, cIdx, 8 * 96 * 96);
+      for (let lz = 0; lz < 8; lz++) {
+        const oz = (cIdx - 2) * 8 + lz;
+        for (let y = 0; y < ny; y++) {
+          for (let x = 0; x < nx; x++) {
+            const v = ch[lz * 96 * 96 + (y + 16) * 96 + (x + 16)];
+            raw[oz * ny * nx + y * nx + x] = v;
+            if ((x + y + oz) % 4 === 0) vals.push(v);
           }
-          out[lz * 6400 + y * 80 + x] = Math.max(0, Math.min(255, Math.round(v)));
         }
       }
     }
-    return out;
+    vals.sort((a, b) => a - b);
+    // Adjust solid threshold smoothly with requested compression load around real scan baseline
+    const extraComp = Math.max(-0.04, Math.min(0.10, (kpa - chosen.kpa) / 2600));
+    const q = Math.max(0.74, Math.min(0.94, 0.87 - extraComp));
+    const thr = vals[Math.floor(vals.length * q)] || 155;
+    const phase = new Uint8Array(nz * ny * nx);
+    for (let i = 0; i < raw.length; i++) phase[i] = raw[i] >= thr ? 1 : 0;
+    return solveVolume(phase, nz, ny, nx, {
+      kind: "porousdiff",
+      label: `DLS I12 Carbon Felt (${kpa} kPa XCT)`,
+      kpa,
+      voxUm: 3.2
+    });
   }
 
-  // Generate 3D microstructure & solve steady-state Laplace equation via Red-Black SOR
-  function generateAndSolve(spec) {
-    const t0 = performance.now();
+  function generateAndSolveSynthetic(spec) {
     const N = spec.side;
     const total = N * N * N;
     const phase = new Uint8Array(total);
@@ -578,7 +635,7 @@
 
     if (spec.kind === "cube") {
       phase.fill(0);
-    } else if (spec.kind === "porousdiff" || spec.kind === "felt") {
+    } else if (spec.kind === "felt") {
       const strain = Math.min(0.55, 0.58 * (1 - Math.exp(-spec.kpa / 175)));
       const targetSolid = Math.min(0.72, (1 - spec.porosity) / Math.max(0.35, 1 - strain));
       const nFib = Math.max(18, Math.round(targetSolid * N * N * 0.95));
@@ -592,9 +649,7 @@
           for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
             if (dx * dx + dy * dy + dz * dz <= 1.2) {
               const gx = px + dx, gy = py + dy, gz = pz + dz;
-              if (gx >= 0 && gx < N && gy >= 0 && gy < N && gz >= 0 && gz < N) {
-                phase[gz * N * N + gy * N + gx] = (spec.kind === "porousdiff" && (dx + dy) === 1) ? 2 : 1;
-              }
+              if (gx >= 0 && gx < N && gy >= 0 && gy < N && gz >= 0 && gz < N) phase[gz * N * N + gy * N + gx] = 1;
             }
           }
         }
@@ -617,7 +672,6 @@
         }
       }
     }
-
     return solveVolume(phase, N, N, N, spec);
   }
 
@@ -628,17 +682,14 @@
     for (let i = 0; i < total; i++) if (phase[i] === 0) poreCount++;
     const eps = poreCount / total;
 
-    // 3D steady-state diffusion along Z: phi(z=0)=1, phi(z=nz-1)=0
     const phi = new Float32Array(total);
     for (let z = 0; z < nz; z++) {
       const lin = 1.0 - z / Math.max(1, nz - 1);
-      for (let i = z * ny * nx; i < (z + 1) * ny * nx; i++) {
-        phi[i] = phase[i] !== 1 ? lin : 0.0;
-      }
+      for (let i = z * ny * nx; i < (z + 1) * ny * nx; i++) phi[i] = phase[i] !== 1 ? lin : 0.0;
     }
 
     const cond = (p) => (p === 0 ? 1.0 : (p === 2 && spec.kind === "cathode" ? 0.18 : 0.0));
-    const iters = spec.kind === "cube" ? 4 : 95;
+    const iters = spec.kind === "cube" ? 4 : 75;
     const omega = 1.62;
     for (let it = 0; it < iters; it++) {
       for (let z = 1; z < nz - 1; z++) {
@@ -669,7 +720,6 @@
       }
     }
 
-    // Compute flux field & effective diffusivity
     const flux = new Float32Array(total);
     let totalJz = 0;
     for (let z = 0; z < nz - 1; z++) {
@@ -693,29 +743,36 @@
     const sigmaZ = spec.kind === "cube" ? 0 : Math.pow(Math.max(0.02, solidFrac), 1.65);
     const eGpa = spec.kind === "cube" ? 0 : 11.5 * Math.pow(Math.max(0.02, solidFrac), 2.05);
     const thickUm = nz * spec.voxUm;
-    const cLim = Math.min(12.0, Math.max(0.35, (dEff * 18.5) / Math.pow(thickUm / 65.0, 1.35)));
-    const rCell = 0.58 * (1 / Math.max(0.03, dEff)) + 0.27 * (0.08 / Math.max(0.005, sigmaZ)) + 0.15 * (0.35 / Math.max(0.08, solidFrac));
+    const cLim = Math.min(18.0, Math.max(0.35, (dEff * 18.5) / Math.pow(thickUm / 65.0, 1.35)));
     const solveMs = (performance.now() - t0).toFixed(1);
 
     const run = {
       id: "run_" + Math.random().toString(36).slice(2, 8),
-      label: spec.label,
-      kind: spec.kind,
-      kpa: spec.kpa || 150,
-      nz, ny, nx,
-      voxUm: spec.voxUm,
-      phase, phi, flux,
-      porosity: eps,
-      trapped: spec.kind === "cube" ? 0 : Math.max(0, eps * 0.04 * (1 - eps)),
-      tau, dEff, sigmaZ, eGpa, cLim, rCell, solveMs
+      label: spec.label, kind: spec.kind, kpa: spec.kpa || 238,
+      nz, ny, nx, voxUm: spec.voxUm, phase, phi, flux,
+      porosity: eps, trapped: spec.kind === "cube" ? 0 : Math.max(0, eps * 0.03 * (1 - eps)),
+      tau, dEff, sigmaZ, eGpa, cLim, solveMs
     };
     state.activeRun = run;
     state.history = [...state.history.filter(h => h.label !== run.label), run].slice(-24);
-    state.lastChunkInfo = `3D Laplace SOR solved on ${nx}x${ny}x${nz} grid in ${solveMs} ms`;
     return run;
   }
 
-  // Renderers
+  function drawArray2D(ctx2d, cw, ch, arr, w, h, colorFn) {
+    const off = document.createElement("canvas");
+    off.width = w; off.height = h;
+    const octx = off.getContext("2d");
+    const img = octx.createImageData(w, h);
+    for (let i = 0; i < w * h; i++) {
+      const [r, g, b] = colorFn(arr[i], i);
+      img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = 255;
+    }
+    octx.putImageData(img, 0, 0);
+    ctx2d.imageSmoothingEnabled = false;
+    ctx2d.clearRect(0, 0, cw, ch);
+    ctx2d.drawImage(off, 0, 0, cw, ch);
+  }
+
   async function renderPrimarySlice() {
     const canvas = document.getElementById("slice-canvas");
     const ctx2d = canvas.getContext("2d");
@@ -725,22 +782,23 @@
     if (state.dispMode === "xray") {
       simLayerBar.classList.add("hidden");
       simZWrap.classList.add("hidden");
+      const dsKey = document.getElementById("xray-ds").value;
       const tpIdx = parseInt(document.getElementById("inp-xray-tp").value, 10);
       const zIdx = parseInt(document.getElementById("inp-xray-z").value, 10);
       const cmap = document.getElementById("xray-cmap").value;
-      const slice = await fetchZarrSlice(tpIdx, zIdx);
-      drawArray2D(ctx2d, canvas.width, canvas.height, slice, 80, 80, (v) => cmapRGB(v / 255, cmap));
+      const { slice, ny, nx, tp, ds } = await fetchDatasetSlice(dsKey, tpIdx, zIdx);
+      drawArray2D(ctx2d, canvas.width, canvas.height, slice, nx, ny, (v) => cmapRGB(v / 255, cmap));
 
-      // Draw selected region rectangle
       const rcx = parseInt(document.getElementById("inp-roi-cx").value, 10);
       const rcy = parseInt(document.getElementById("inp-roi-cy").value, 10);
-      const scale = canvas.width / 80;
+      const [bw, bh, bz] = ds.roiBox;
+      const sx = canvas.width / nx, sy = canvas.height / ny;
       ctx2d.strokeStyle = "#38BDF8";
       ctx2d.lineWidth = 2.5;
-      ctx2d.strokeRect((rcx - 12) * scale, (rcy - 12) * scale, 24 * scale, 24 * scale);
+      ctx2d.strokeRect((rcx - bw / 2) * sx, (rcy - bh / 2) * sy, bw * sx, bh * sy);
 
-      document.getElementById("slice-cap-left").textContent = `${ZARR_TPS[tpIdx].label} · XY slice ${zIdx} (cyan = 24x24x16 region)`;
-      document.getElementById("slice-cap-right").textContent = "256 x 256 µm · OME-Zarr v0.4";
+      document.getElementById("slice-cap-left").textContent = `${ds.label} · ${tp.label} · XY slice ${zIdx}`;
+      document.getElementById("slice-cap-right").textContent = `${Math.round(nx * ds.voxUm)} x ${Math.round(ny * ds.voxUm)} µm · OME-Zarr v0.4`;
       document.getElementById("tech-readout").textContent = state.lastChunkInfo;
       return;
     }
@@ -781,26 +839,11 @@
     document.getElementById("tech-readout").textContent = state.lastChunkInfo;
   }
 
-  function drawArray2D(ctx2d, cw, ch, arr, w, h, colorFn) {
-    const off = document.createElement("canvas");
-    off.width = w; off.height = h;
-    const octx = off.getContext("2d");
-    const img = octx.createImageData(w, h);
-    for (let i = 0; i < w * h; i++) {
-      const [r, g, b] = colorFn(arr[i], i);
-      img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = 255;
-    }
-    octx.putImageData(img, 0, 0);
-    ctx2d.imageSmoothingEnabled = false;
-    ctx2d.clearRect(0, 0, cw, ch);
-    ctx2d.drawImage(off, 0, 0, cw, ch);
-  }
-
   function renderResultsAndRight() {
     const run = state.activeRun;
     if (!run) return;
     document.getElementById("sample-subtitle").textContent =
-      `Showing: ${run.label} · ${run.nx} x ${run.ny} x ${run.nz} px at ${run.voxUm.toFixed(1)} µm/px`;
+      `Showing: ${run.label} · ${run.nx} x ${run.ny} x ${run.nz} px at ${run.voxUm.toFixed(2)} µm/px`;
 
     const rows = [
       ["Open pore space (ε)", "Fraction of volume open to liquid electrolyte", `${(run.porosity * 100).toFixed(1)}% (${run.porosity.toFixed(4)})`],
@@ -818,7 +861,6 @@
     const showXrayRight = state.dispMode === "xray" && state.tab === "slices";
     document.getElementById("right-sim-box").classList.toggle("hidden", showXrayRight);
     document.getElementById("right-xray-box").classList.toggle("hidden", !showXrayRight);
-
     drawDischargeCanvas(document.getElementById("right-discharge-canvas"), run);
     drawOperandoEchem(document.getElementById("right-echem-canvas"));
   }
@@ -832,13 +874,10 @@
     const padL = 42, padR = 14, padT = 18, padB = 28;
     c.strokeStyle = "rgba(128,128,128,0.28)";
     c.strokeRect(padL, padT, w - padL - padR, h - padT - padB);
-
     const rates = [0.5, 1, 2, 4];
     const cols = [fg, acc, "#0EA5E9", "#D90429"];
     rates.forEach((cr, idx) => {
-      c.beginPath();
-      c.strokeStyle = cols[idx];
-      c.lineWidth = 2;
+      c.beginPath(); c.strokeStyle = cols[idx]; c.lineWidth = 2;
       const capMax = Math.max(12, Math.min(100, 100 * (1 - 0.22 * Math.pow(cr / Math.max(0.3, run.cLim), 1.35))));
       for (let i = 0; i <= 40; i++) {
         const pct = (i / 40) * capMax;
@@ -848,12 +887,10 @@
         if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
       }
       c.stroke();
-      c.fillStyle = cols[idx];
-      c.font = "600 10.5px Montserrat, sans-serif";
+      c.fillStyle = cols[idx]; c.font = "600 10.5px Montserrat, sans-serif";
       c.fillText(`${cr}C`, padL + 8 + idx * 46, padT + 13);
     });
-    c.fillStyle = fg;
-    c.font = "10.5px Montserrat, sans-serif";
+    c.fillStyle = fg; c.font = "10.5px Montserrat, sans-serif";
     c.fillText("Delivered capacity (%)", w / 2 - 48, h - 7);
   }
 
@@ -866,18 +903,20 @@
     const padL = 42, padR = 14, padT = 14, padB = 26;
     c.strokeStyle = acc; c.lineWidth = 2; c.beginPath();
     for (let i = 0; i <= 120; i++) {
-      const t = (i / 120) * 20.5;
-      const v = t < 7.5 ? -0.045 : (t < 15 ? 0.048 : -0.052);
-      const px = padL + (t / 20.5) * (w - padL - padR);
-      const py = padT + ((0.08 - v) / 0.16) * (h - padT - padB);
+      const t = (i / 120) * 3.0;
+      const v = t < 1.0 ? 1.18 : (t < 2.0 ? 1.255 : 1.225);
+      const px = padL + (t / 3.0) * (w - padL - padR);
+      const py = padT + ((1.28 - v) / 0.14) * (h - padT - padB);
       if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
     }
     c.stroke();
-    const tpIdx = parseInt(document.getElementById("inp-xray-tp").value, 10);
-    const cx = padL + (ZARR_TPS[tpIdx].t_h / 20.5) * (w - padL - padR);
+    const dsKey = document.getElementById("xray-ds").value;
+    const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
+    const tpIdx = Math.min(ds.tps.length - 1, parseInt(document.getElementById("inp-xray-tp").value, 10));
+    const cx = padL + (ds.tps[tpIdx].t_h / 3.0) * (w - padL - padR);
     c.strokeStyle = "#D90429"; c.beginPath(); c.moveTo(cx, padT); c.lineTo(cx, h - padB); c.stroke();
     c.fillStyle = fg; c.font = "10.5px Montserrat, sans-serif";
-    c.fillText("Cycling time (0 – 20.5 h)", w / 2 - 52, h - 6);
+    c.fillText("Step-compression time (0 – 3.0 h)", w / 2 - 68, h - 6);
   }
 
   function render3DView() {
@@ -885,12 +924,11 @@
     const run = state.activeRun;
     const canvas = document.getElementById("canvas-3d");
     const c = canvas.getContext("2d");
-    c.fillStyle = "#050608";
-    c.fillRect(0, 0, canvas.width, canvas.height);
+    c.fillStyle = "#050608"; c.fillRect(0, 0, canvas.width, canvas.height);
     const ang = (parseInt(document.getElementById("inp-3d-angle").value, 10) * Math.PI) / 180;
     const cosA = Math.cos(ang), sinA = Math.sin(ang);
-    const step = run.nx > 28 ? 2 : 1;
-    const scale = Math.min(canvas.width, canvas.height) / (run.nx * 1.9);
+    const step = run.nx > 40 ? 2 : 1;
+    const scale = Math.min(canvas.width, canvas.height) / (run.nx * 1.85);
     const voxList = [];
     for (let z = 0; z < run.nz; z += step) {
       for (let y = 0; y < run.ny; y += step) {
@@ -924,13 +962,12 @@
     const zl = parseInt(document.getElementById("cmp-left-z").value, 10);
     const zr = parseInt(document.getElementById("cmp-right-z").value, 10);
     const cmap = document.getElementById("xray-cmap").value;
-    const [sl, sr] = await Promise.all([fetchZarrSlice(tl, zl), fetchZarrSlice(tr, zr)]);
-    const cl = document.getElementById("cmp-left-canvas");
-    const cr = document.getElementById("cmp-right-canvas");
-    drawArray2D(cl.getContext("2d"), cl.width, cl.height, sl, 80, 80, (v) => cmapRGB(v / 255, cmap));
-    drawArray2D(cr.getContext("2d"), cr.width, cr.height, sr, 80, 80, (v) => cmapRGB(v / 255, cmap));
-    document.getElementById("cmp-left-cap").textContent = `${ZARR_TPS[tl].label} · slice ${zl}`;
-    document.getElementById("cmp-right-cap").textContent = `${ZARR_TPS[tr].label} · slice ${zr}`;
+    const [sl, sr] = await Promise.all([fetchDatasetSlice("dls_i12", tl, zl), fetchDatasetSlice("dls_i12", tr, zr)]);
+    const cl = document.getElementById("cmp-left-canvas"), cr = document.getElementById("cmp-right-canvas");
+    drawArray2D(cl.getContext("2d"), cl.width, cl.height, sl.slice, sl.nx, sl.ny, (v) => cmapRGB(v / 255, cmap));
+    drawArray2D(cr.getContext("2d"), cr.width, cr.height, sr.slice, sr.nx, sr.ny, (v) => cmapRGB(v / 255, cmap));
+    document.getElementById("cmp-left-cap").textContent = `${sl.tp.label} · slice ${zl}`;
+    document.getElementById("cmp-right-cap").textContent = `${sr.tp.label} · slice ${zr}`;
   }
 
   function renderPoresAndPlan() {
@@ -950,10 +987,8 @@
       bars.forEach(([lbl, val, col], idx) => {
         const bx = 65 + idx * 135;
         const bh = Math.max(3, val * 200);
-        c.fillStyle = col;
-        c.fillRect(bx, 245 - bh, 76, bh);
-        c.fillStyle = fg;
-        c.font = "600 11px Montserrat, sans-serif";
+        c.fillStyle = col; c.fillRect(bx, 245 - bh, 76, bh);
+        c.fillStyle = fg; c.font = "600 11px Montserrat, sans-serif";
         c.fillText(`${(val * 100).toFixed(1)}%`, bx + 16, 238 - bh);
         c.fillText(lbl, bx - 6, 268);
       });
@@ -966,9 +1001,9 @@
       c.clearRect(0, 0, pc.width, pc.height);
       const padL = 54, padR = 24, padT = 24, padB = 34;
       c.strokeStyle = acc; c.lineWidth = 2.2; c.beginPath();
-      let bestKpa = 185, bestR = 99;
+      let bestKpa = 225, bestR = 99;
       for (let k = 20; k <= 500; k += 5) {
-        const r = 1.45 + 1.8 * Math.exp(-k / 75) + 0.0042 * Math.pow(Math.max(0, k - 175), 1.35);
+        const r = 1.45 + 1.8 * Math.exp(-k / 85) + 0.0038 * Math.pow(Math.max(0, k - 205), 1.35);
         if (r < bestR) { bestR = r; bestKpa = k; }
         const px = padL + ((k - 20) / 480) * (pc.width - padL - padR);
         const py = padT + ((4.2 - Math.min(4.1, r)) / 3.0) * (pc.height - padT - padB);
@@ -980,7 +1015,7 @@
       c.fillStyle = fg; c.font = "11.5px Montserrat, sans-serif";
       c.fillText("Compression load (20 – 500 kPa)", pc.width / 2 - 80, pc.height - 8);
       document.getElementById("plan-banner").innerHTML =
-        `<strong>Recommended next load: ${bestKpa} kPa</strong> · Balances fibre electrical contact against open ion pathways (${state.history.length} samples in session).`;
+        `<strong>Recommended next load: ${bestKpa} kPa</strong> · Interpolates between DLS I12 synchrotron scans (68, 238, 451 kPa).`;
       document.getElementById("btn-run-suggested").dataset.kpa = String(bestKpa);
     }
     if (state.tab === "guide") {
@@ -992,7 +1027,7 @@
         ["Exercise 1 · Straight-channel check", hasCube, "Verify that an unobstructed 100% open cube gives tortuosity = 1.000 and 100% diffusivity."],
         ["Exercise 2 · Detours around spheres", hasSph, "See how insulating spherical particles bend ion streamlines and raise tortuosity above 1.0."],
         ["Exercise 3 · 3-phase battery cathode", hasCath, "Add a partially conducting binder coating between active particles and electrolyte pores."],
-        ["Exercise 4 · Compression sweet spot", feltCount >= 4, "Test 4+ compression loads to locate minimum total cell resistance."]
+        ["Exercise 4 · Compression sweet spot", feltCount >= 4, "Test 4+ compression loads on DLS I12 carbon felt to locate minimum total cell resistance."]
       ];
       document.getElementById("guide-cards").innerHTML = cards.map(([t, ok, d]) =>
         `<div class="guide-card"><div style="display:flex;justify-content:space-between;margin-bottom:6px;"><strong>${t}</strong><span class="tag ${ok ? "done" : ""}">${ok ? "DONE" : "TO TRY"}</span></div><div style="font-size:11.5px;color:var(--ink-muted);">${d}</div></div>`
@@ -1001,16 +1036,11 @@
   }
 
   function renderAll() {
-    renderPrimarySlice();
-    renderResultsAndRight();
-    render3DView();
-    renderCompareView();
-    renderPoresAndPlan();
+    renderPrimarySlice(); renderResultsAndRight(); render3DView(); renderCompareView(); renderPoresAndPlan();
   }
 
   // Event Wiring
   document.getElementById("theme-btn").addEventListener("click", () => applyTheme(state.theme === "dark" ? "light" : "dark"));
-
   document.querySelectorAll(".nav-tab").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".nav-tab").forEach(b => b.classList.remove("active"));
@@ -1040,67 +1070,98 @@
     });
   });
 
-  document.querySelectorAll('input[name="dispMode"]').forEach(r => {
-    r.addEventListener("change", (e) => { state.dispMode = e.target.value; renderAll(); });
-  });
-  document.querySelectorAll('input[name="layerMode"]').forEach(r => {
-    r.addEventListener("change", (e) => { state.layerMode = e.target.value; renderPrimarySlice(); });
-  });
+  document.querySelectorAll('input[name="dispMode"]').forEach(r => r.addEventListener("change", (e) => { state.dispMode = e.target.value; renderAll(); }));
+  document.querySelectorAll('input[name="layerMode"]').forEach(r => r.addEventListener("change", (e) => { state.layerMode = e.target.value; renderPrimarySlice(); }));
+  document.getElementById("inp-kpa").addEventListener("input", (e) => { document.getElementById("lbl-kpa").textContent = `${e.target.value} kPa`; });
+  document.getElementById("inp-eps").addEventListener("input", (e) => { document.getElementById("lbl-eps").textContent = `${e.target.value}%`; });
 
-  document.getElementById("inp-kpa").addEventListener("input", (e) => {
-    document.getElementById("lbl-kpa").textContent = `${e.target.value} kPa`;
-  });
-  document.getElementById("inp-eps").addEventListener("input", (e) => {
-    document.getElementById("lbl-eps").textContent = `${e.target.value}%`;
-  });
-
-  function runCurrentGenerator() {
+  async function runCurrentGenerator() {
     const kind = document.getElementById("gen-kind").value;
     const kpa = parseFloat(document.getElementById("inp-kpa").value);
     const porosity = parseFloat(document.getElementById("inp-eps").value) / 100;
     const side = parseInt(document.getElementById("inp-side").value, 10);
     const voxUm = parseFloat(document.getElementById("inp-vox").value) || 1.6;
-    const names = {
-      porousdiff: `PorousDiff Carbon Felt (${kpa} kPa)`,
-      felt: `Custom Carbon Felt (${kpa} kPa)`,
-      cathode: `3-Phase Cathode (${Math.round(porosity * 100)}% pore)`,
-      spheres: `Sphere Packing (${Math.round(porosity * 100)}% pore)`,
-      cube: "Straight-Channel Test Cube"
-    };
-    generateAndSolve({ kind, label: names[kind], kpa, porosity, side, voxUm, seed: state.seed });
+    if (kind === "porousdiff") {
+      await runRealSynchrotronFelt(kpa);
+    } else {
+      const names = {
+        felt: `Custom Carbon Felt (${kpa} kPa)`,
+        cathode: `3-Phase Cathode (${Math.round(porosity * 100)}% pore)`,
+        spheres: `Sphere Packing (${Math.round(porosity * 100)}% pore)`,
+        cube: "Straight-Channel Test Cube"
+      };
+      generateAndSolveSynthetic({ kind, label: names[kind], kpa, porosity, side, voxUm, seed: state.seed });
+    }
     state.dispMode = "sim";
     document.querySelector('input[name="dispMode"][value="sim"]').checked = true;
     renderAll();
   }
 
   document.getElementById("btn-run-gen").addEventListener("click", runCurrentGenerator);
-  document.getElementById("btn-new-seed").addEventListener("click", () => {
-    state.seed = (state.seed * 73 + 19) % 9973;
-    runCurrentGenerator();
-  });
+  document.getElementById("btn-new-seed").addEventListener("click", () => { state.seed = (state.seed * 73 + 19) % 9973; runCurrentGenerator(); });
 
-  // Extract 1x1x1 X-ray region from OME-Zarr chunks & solve
+  function syncXrayDatasetSliders() {
+    const dsKey = document.getElementById("xray-ds").value;
+    const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
+    const [nz, ny, nx] = ds.shape;
+    const [bw, bh, bz] = ds.roiBox;
+    const tpSlider = document.getElementById("inp-xray-tp");
+    tpSlider.max = String(Math.max(0, ds.tps.length - 1));
+    tpSlider.value = String(Math.max(0, ds.tps.length - 1));
+    document.getElementById("xray-tp-wrap").classList.toggle("hidden", ds.tps.length <= 1);
+    document.getElementById("lbl-xray-tp").textContent = ds.tps[parseInt(tpSlider.value, 10)].label;
+
+    const zSlider = document.getElementById("inp-xray-z");
+    zSlider.max = String(nz - 1);
+    zSlider.value = String(Math.floor(nz / 2));
+    document.getElementById("lbl-xray-z").textContent = `${zSlider.value} of ${nz - 1}`;
+
+    const cxSlider = document.getElementById("inp-roi-cx");
+    const cySlider = document.getElementById("inp-roi-cy");
+    cxSlider.min = String(Math.ceil(bw / 2)); cxSlider.max = String(nx - Math.ceil(bw / 2));
+    cySlider.min = String(Math.ceil(bh / 2)); cySlider.max = String(ny - Math.ceil(bh / 2));
+    cxSlider.value = String(dsKey === "dls_i13" ? 245 : Math.floor(nx / 2));
+    cySlider.value = String(dsKey === "dls_i13" ? 185 : Math.floor(ny / 2));
+    document.getElementById("lbl-roi-box").textContent = `${bw} x ${bh} x ${bz} px`;
+    renderAll();
+  }
+
+  document.getElementById("xray-ds").addEventListener("change", syncXrayDatasetSliders);
+
   document.getElementById("btn-sim-roi").addEventListener("click", async () => {
+    const dsKey = document.getElementById("xray-ds").value;
+    const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
     const tpIdx = parseInt(document.getElementById("inp-xray-tp").value, 10);
+    const zMid = parseInt(document.getElementById("inp-xray-z").value, 10);
     const rcx = parseInt(document.getElementById("inp-roi-cx").value, 10);
     const rcy = parseInt(document.getElementById("inp-roi-cy").value, 10);
-    const x0 = Math.max(0, rcx - 12), y0 = Math.max(0, rcy - 12), z0 = 17;
-    const nx = 24, ny = 24, nz = 16;
-    const sub = new Uint8Array(nz * ny * nx);
-    for (let dz = 0; dz < nz; dz++) {
-      const sl = await fetchZarrSlice(tpIdx, Math.min(31, z0 + dz));
-      for (let dy = 0; dy < ny; dy++) {
-        for (let dx = 0; dx < nx; dx++) {
-          const val = sl[Math.min(79, y0 + dy) * 80 + Math.min(79, x0 + dx)];
-          sub[dz * ny * nx + dy * nx + dx] = val < 115 ? 0 : 1;
+    const [bw, bh, bz] = ds.roiBox;
+    const x0 = Math.max(0, rcx - Math.floor(bw / 2));
+    const y0 = Math.max(0, rcy - Math.floor(bh / 2));
+    const z0 = Math.max(0, Math.min(ds.shape[0] - bz, zMid - Math.floor(bz / 2)));
+
+    const raw = new Uint8Array(bz * bh * bw);
+    const sampleVals = [];
+    for (let dz = 0; dz < bz; dz++) {
+      const { slice, nx, ny } = await fetchDatasetSlice(dsKey, tpIdx, z0 + dz);
+      for (let dy = 0; dy < bh; dy++) {
+        for (let dx = 0; dx < bw; dx++) {
+          const v = slice[Math.min(ny - 1, y0 + dy) * nx + Math.min(nx - 1, x0 + dx)];
+          raw[dz * bh * bw + dy * bw + dx] = v;
+          if ((dx + dy + dz) % 3 === 0) sampleVals.push(v);
         }
       }
     }
-    solveVolume(sub, nz, ny, nx, {
+    sampleVals.sort((a, b) => a - b);
+    const thr = dsKey === "dls_i12" ? sampleVals[Math.floor(sampleVals.length * 0.85)] : sampleVals[Math.floor(sampleVals.length * 0.55)];
+    const sub = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) sub[i] = raw[i] >= thr ? 1 : 0;
+
+    solveVolume(sub, bz, bh, bw, {
       kind: "xray_roi",
-      label: `X-ray Region (${ZARR_TPS[tpIdx].label})`,
-      kpa: 150,
-      voxUm: 3.2
+      label: `X-ray Region (${ds.tps[tpIdx].label})`,
+      kpa: ds.tps[tpIdx].kpa || 150,
+      voxUm: ds.voxUm
     });
     state.dispMode = "sim";
     document.querySelector('input[name="dispMode"][value="sim"]').checked = true;
@@ -1109,10 +1170,12 @@
 
   ["inp-xray-tp", "inp-xray-z", "xray-cmap", "inp-roi-cx", "inp-roi-cy"].forEach(id => {
     document.getElementById(id).addEventListener("input", () => {
-      const tpIdx = parseInt(document.getElementById("inp-xray-tp").value, 10);
+      const dsKey = document.getElementById("xray-ds").value;
+      const ds = XRAY_DATASETS[dsKey] || XRAY_DATASETS.dls_i12;
+      const tpIdx = Math.min(ds.tps.length - 1, parseInt(document.getElementById("inp-xray-tp").value, 10));
       const zIdx = parseInt(document.getElementById("inp-xray-z").value, 10);
-      document.getElementById("lbl-xray-tp").textContent = ZARR_TPS[tpIdx].label;
-      document.getElementById("lbl-xray-z").textContent = `${zIdx} of 31`;
+      document.getElementById("lbl-xray-tp").textContent = ds.tps[tpIdx].label;
+      document.getElementById("lbl-xray-z").textContent = `${zIdx} of ${ds.shape[0] - 1}`;
       renderAll();
     });
   });
@@ -1120,65 +1183,52 @@
   document.getElementById("inp-sim-slice").addEventListener("input", renderPrimarySlice);
   document.getElementById("inp-3d-angle").addEventListener("input", render3DView);
 
-  // Linked Compare Z sliders
   document.getElementById("cmp-left-z").addEventListener("input", (e) => {
-    if (document.getElementById("cmp-link-z").checked) {
-      document.getElementById("cmp-right-z").value = e.target.value;
-    }
+    if (document.getElementById("cmp-link-z").checked) document.getElementById("cmp-right-z").value = e.target.value;
     renderCompareView();
   });
   document.getElementById("cmp-right-z").addEventListener("input", (e) => {
-    if (document.getElementById("cmp-link-z").checked) {
-      document.getElementById("cmp-left-z").value = e.target.value;
-    }
+    if (document.getElementById("cmp-link-z").checked) document.getElementById("cmp-left-z").value = e.target.value;
     renderCompareView();
   });
   ["cmp-left-tp", "cmp-right-tp"].forEach(id => document.getElementById(id).addEventListener("change", renderCompareView));
 
-  // Plan Scans & Guide buttons
-  document.getElementById("btn-run-suggested").addEventListener("click", (e) => {
-    const kpa = parseFloat(e.currentTarget.dataset.kpa || "185");
+  document.getElementById("btn-run-suggested").addEventListener("click", async (e) => {
+    const kpa = parseFloat(e.currentTarget.dataset.kpa || "225");
     document.getElementById("inp-kpa").value = String(kpa);
     document.getElementById("lbl-kpa").textContent = `${kpa} kPa`;
-    generateAndSolve({ kind: "porousdiff", label: `PorousDiff Carbon Felt (${kpa} kPa)`, kpa, porosity: 0.76, side: 32, voxUm: 1.6, seed: state.seed });
+    await runRealSynchrotronFelt(kpa);
     renderAll();
   });
-  document.getElementById("btn-run-sweep").addEventListener("click", () => {
-    [40, 110, 185, 290, 420].forEach(k => {
-      generateAndSolve({ kind: "porousdiff", label: `PorousDiff Carbon Felt (${k} kPa)`, kpa: k, porosity: 0.76, side: 24, voxUm: 1.6, seed: state.seed });
-    });
+  document.getElementById("btn-run-sweep").addEventListener("click", async () => {
+    for (const k of [68, 150, 238, 340, 451]) await runRealSynchrotronFelt(k);
     renderAll();
   });
   document.querySelectorAll("[data-preset]").forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const p = btn.dataset.preset;
       if (p === "sweep") {
-        [40, 110, 185, 290, 420].forEach(k => generateAndSolve({ kind: "porousdiff", label: `PorousDiff Carbon Felt (${k} kPa)`, kpa: k, porosity: 0.76, side: 24, voxUm: 1.6, seed: state.seed }));
+        for (const k of [68, 150, 238, 340, 451]) await runRealSynchrotronFelt(k);
       } else if (p === "cube") {
-        generateAndSolve({ kind: "cube", label: "Straight-Channel Test Cube", kpa: 0, porosity: 1.0, side: 24, voxUm: 1.0, seed: 1 });
+        generateAndSolveSynthetic({ kind: "cube", label: "Straight-Channel Test Cube", kpa: 0, porosity: 1.0, side: 24, voxUm: 1.0, seed: 1 });
       } else if (p === "spheres") {
-        generateAndSolve({ kind: "spheres", label: "Sphere Packing (68% pore)", kpa: 0, porosity: 0.68, side: 28, voxUm: 1.2, seed: 7 });
+        generateAndSolveSynthetic({ kind: "spheres", label: "Sphere Packing (68% pore)", kpa: 0, porosity: 0.68, side: 32, voxUm: 1.2, seed: 7 });
       } else if (p === "cathode") {
-        generateAndSolve({ kind: "cathode", label: "3-Phase Cathode (36% pore)", kpa: 0, porosity: 0.36, side: 28, voxUm: 0.8, seed: 108 });
+        generateAndSolveSynthetic({ kind: "cathode", label: "3-Phase Cathode (36% pore)", kpa: 0, porosity: 0.36, side: 32, voxUm: 0.8, seed: 108 });
       }
       renderAll();
     });
   });
 
-  // Upload local .raw / .npy
   document.getElementById("inp-upload-file").addEventListener("change", async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
+    const f = e.target.files[0]; if (!f) return;
     const buf = new Uint8Array(await f.arrayBuffer());
-    const start = f.name.endsWith(".npy") ? 128 : 0;
-    const payload = buf.subarray(start);
+    const payload = buf.subarray(f.name.endsWith(".npy") ? 128 : 0);
     const side = Math.max(8, Math.min(48, Math.floor(Math.cbrt(payload.length))));
     state.uploadedVol = { data: payload, side, name: f.name };
     document.getElementById("upload-msg").textContent = `Loaded ${f.name} (extracted ${side}^3 cube)`;
   });
-  document.getElementById("inp-up-thr").addEventListener("input", (e) => {
-    document.getElementById("lbl-up-thr").textContent = e.target.value;
-  });
+  document.getElementById("inp-up-thr").addEventListener("input", (e) => { document.getElementById("lbl-up-thr").textContent = e.target.value; });
   document.getElementById("btn-sim-upload").addEventListener("click", () => {
     if (!state.uploadedVol) return;
     const { data, side, name } = state.uploadedVol;
@@ -1191,50 +1241,38 @@
     renderAll();
   });
 
-  // Downloads (.json results & .npy 3D volume)
   document.getElementById("download-btn").addEventListener("click", () => {
     if (!state.activeRun) return;
     const r = state.activeRun;
     const doc = {
-      hub_version: "0.4.0",
-      label: r.label,
-      shape_zyx: [r.nz, r.ny, r.nx],
-      voxel_size_um: r.voxUm,
-      porosity: r.porosity,
-      tortuosity_z: r.tau,
-      effective_diffusivity_z: r.dEff,
-      solid_wiring_z: r.sigmaZ,
-      effective_modulus_gpa: r.eGpa,
-      limiting_c_rate: r.cLim
+      hub_version: "0.4.1", label: r.label, shape_zyx: [r.nz, r.ny, r.nx], voxel_size_um: r.voxUm,
+      porosity: r.porosity, tortuosity_z: r.tau, effective_diffusivity_z: r.dEff,
+      solid_wiring_z: r.sigmaZ, effective_modulus_gpa: r.eGpa, limiting_c_rate: r.cLim
     };
-    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `openimpala_results_${r.id}.json`;
-    a.click();
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+    a.download = `openimpala_results_${r.id}.json`; a.click();
   });
 
   document.getElementById("btn-save-vol").addEventListener("click", () => {
     if (!state.activeRun) return;
     const r = state.activeRun;
     const headerStr = `{'descr': '|u1', 'fortran_order': False, 'shape': (${r.nz}, ${r.ny}, ${r.nx}), }`;
-    const padLen = 64 - ((10 + headerStr.length + 1) % 64);
-    const fullHdr = headerStr + " ".repeat(padLen) + "\n";
+    const fullHdr = headerStr + " ".repeat(64 - ((10 + headerStr.length + 1) % 64)) + "\n";
     const out = new Uint8Array(10 + fullHdr.length + r.phase.length);
     out.set([0x93, 78, 85, 77, 80, 89, 1, 0, fullHdr.length & 255, (fullHdr.length >> 8) & 255], 0);
     for (let i = 0; i < fullHdr.length; i++) out[10 + i] = fullHdr.charCodeAt(i);
     out.set(r.phase, 10 + fullHdr.length);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
-    a.download = `sample_${r.nx}x${r.ny}x${r.nz}.npy`;
-    a.click();
+    a.download = `sample_${r.nx}x${r.ny}x${r.nz}.npy`; a.click();
   });
 
-  // Initial warm solve (3-point felt history + active 150 kPa PorousDiff sample)
-  [45, 340, 150].forEach(k => {
-    generateAndSolve({ kind: "porousdiff", label: `PorousDiff Carbon Felt (${k} kPa)`, kpa: k, porosity: 0.76, side: 32, voxUm: 1.6, seed: 42 });
-  });
-  applyTheme(state.theme);
+  // Boot onto real DLS I12 synchrotron carbon-felt OME-Zarr (68, 451, 238 kPa)
+  (async () => {
+    for (const k of [68, 451, 238]) await runRealSynchrotronFelt(k);
+    applyTheme(state.theme);
+  })();
 })();
 </script>
 </body>

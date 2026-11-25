@@ -56,9 +56,13 @@ def kinematic_compress_volume(
 
     arr = np.asarray(vol.data, dtype=np.int32)
     nz, ny, nx = arr.shape
-    nz_new = max(8, int(round(nz * (1.0 - eps))))
-    if nz_new >= nz:
+    raw_nz_new = max(8, int(round(nz * (1.0 - eps))))
+    if raw_nz_new >= nz:
         return vol
+    if nz >= 48:
+        nz_new = max(8, min(nz - (nz % 4 or 4), int(round(raw_nz_new / 4.0)) * 4))
+    else:
+        nz_new = raw_nz_new
 
     solid_mask = arr != int(conducting_phase)
     orig_solid_vox = int(np.count_nonzero(solid_mask))

@@ -1,69 +1,89 @@
 {
-  "dataset": "Silver interlayer cell (Ag05 \u00b7 5 timepoints)",
-  "timepoints": [
+  "version": "0.4.1",
+  "primary_dataset": "DLS I12 Virgin Carbon Felt \u00b7 In-Situ Compression (1.6 um)",
+  "dls_i12_timepoints": [
     {
-      "store": "t0_0h.ome.zarr",
-      "label": "0h pristine",
-      "time_h": 0.0,
+      "store": "dls_i12_068kpa.ome.zarr",
+      "label": "0.008 mV/V (68 kPa)",
+      "time_h": 0.5,
+      "clamping_kpa": 68.0,
       "shape_zyx": [
-        32,
-        80,
-        80
+        128,
+        192,
+        192
       ],
       "chunks_zyx": [
-        8,
-        80,
-        80
+        16,
+        192,
+        192
       ],
-      "voxel_um": 3.2
+      "voxel_um": 1.6
     },
     {
-      "store": "t1_7p5h.ome.zarr",
-      "label": "7.5h after 1st plating",
-      "time_h": 7.5,
+      "store": "dls_i12_238kpa.ome.zarr",
+      "label": "0.028 mV/V (238 kPa)",
+      "time_h": 1.5,
+      "clamping_kpa": 238.0,
       "shape_zyx": [
-        32,
-        80,
-        80
+        128,
+        192,
+        192
       ],
       "chunks_zyx": [
-        8,
-        80,
-        80
+        16,
+        192,
+        192
       ],
-      "voxel_um": 3.2
+      "voxel_um": 1.6
     },
     {
-      "store": "t2_15h.ome.zarr",
-      "label": "15h after 1st stripping",
-      "time_h": 15.0,
+      "store": "dls_i12_451kpa.ome.zarr",
+      "label": "0.053 mV/V (451 kPa)",
+      "time_h": 2.5,
+      "clamping_kpa": 451.0,
       "shape_zyx": [
-        32,
-        80,
-        80
+        128,
+        192,
+        192
       ],
       "chunks_zyx": [
-        8,
-        80,
-        80
+        16,
+        192,
+        192
       ],
-      "voxel_um": 3.2
+      "voxel_um": 1.6
+    }
+  ],
+  "additional_stores": [
+    {
+      "store": "dls_i13_zn13x_capillary.ome.zarr",
+      "label": "DLS I13-2 Zeolite 13X Capillary + Ruby Sphere (3.25 um, Green et al. 2025)",
+      "shape_zyx": [
+        48,
+        400,
+        400
+      ],
+      "chunks_zyx": [
+        16,
+        480,
+        480
+      ],
+      "voxel_um": 3.25
     },
     {
-      "store": "t3_20h.ome.zarr",
-      "label": "20h after 2nd plating",
-      "time_h": 20.0,
+      "store": "nlm25_dendritic_xct.ome.zarr",
+      "label": "Dendritic / Porous Electrode Micro-CT (nlm25, 2.0 um)",
       "shape_zyx": [
-        32,
-        80,
-        80
+        128,
+        256,
+        256
       ],
       "chunks_zyx": [
-        8,
-        80,
-        80
+        16,
+        256,
+        256
       ],
-      "voxel_um": 3.2
+      "voxel_um": 2.0
     }
   ]
 }

@@ -77,19 +77,46 @@ class RunRegistry:
         with self._lock:
             return [r.summary.to_dict() for r in self._runs.values()]
 
-    def warm_populate_defaults(self, *, shape: tuple[int, int, int] = (48, 48, 48)) -> None:
-        """Pre-solve the initial 3-point Carbon Felt compression sweep so page load is instant."""
+    def warm_populate_defaults(self, *, shape: tuple[int, int, int] = (96, 96, 96)) -> None:
+        """Pre-solve the initial 3-load DLS I12 synchrotron Carbon Felt sweep so page load is instant."""
         if self.boot_run_ids:
             return
-        base_solve = PRESETS["carbon_felt_compression"].solve
+        from ..contracts import MicrostructureSpec, SolveSpec
+        from ..engine.generators import list_porousdiff_gallery
+
+        base_solve = SolveSpec(
+            **{
+                **PRESETS["carbon_felt_compression"].solve.to_dict(),
+                "max_solve_side": max(16, int(max(shape))),
+            }
+        )
+        gallery = list_porousdiff_gallery()
         ids: list[str] = []
         default_id: str | None = None
-        for kpa in DEFAULT_SWEEP_LOADS_KPA:
-            mspec = make_carbon_felt_spec(kpa, shape=shape, seed=42)
-            executed = run_transport_pipeline(mspec, base_solve)
-            rid = self.put(executed)
-            ids.append(rid)
-            if abs(kpa - 150.0) < 1.0:
-                default_id = rid
+        if len(gallery) >= 2:
+            loads = [float(g.get("clamping_kpa", 150.0)) for g in gallery[:3]]
+            for kpa in loads:
+                mspec = MicrostructureSpec(
+                    source_kind="porousdiff_gallery",
+                    label=f"DLS I12 Virgin Carbon Felt ({kpa:.0f} kPa XCT)",
+                    shape=shape,
+                    voxel_size_um=(3.2, 3.2, 3.2),
+                    clamping_kpa=kpa,
+                    compression_strain=-1.0,
+                    seed=42,
+                )
+                executed = run_transport_pipeline(mspec, base_solve)
+                rid = self.put(executed)
+                ids.append(rid)
+                if 180.0 <= kpa <= 280.0:
+                    default_id = rid
+        else:
+            for kpa in DEFAULT_SWEEP_LOADS_KPA:
+                mspec = make_carbon_felt_spec(kpa, shape=shape, seed=42)
+                executed = run_transport_pipeline(mspec, base_solve)
+                rid = self.put(executed)
+                ids.append(rid)
+                if abs(kpa - 150.0) < 1.0:
+                    default_id = rid
         self.boot_run_ids = ids
         self.default_run_id = default_id or ids[len(ids) // 2]

@@ -8,7 +8,7 @@ app_port: 7860
 license: bsd-3-clause
 ---
 
-# The OpenImpala Hub (`v0.4.0`)
+# The OpenImpala Hub (`v0.4.1`)
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Layer 4: Service](https://img.shields.io/badge/BASE_Lab-Layer_4_Service-0d9488)](AGENTS.md)
@@ -23,15 +23,19 @@ license: bsd-3-clause
 Developed by the **[BASE Laboratory](https://jameslehoux.com/)** at the University of Greenwich ([GitHub](https://github.com/BASE-Laboratory)).
 
 - **Maintainer:** Dr. James Le Houx (`j.lehoux@greenwich.ac.uk`)
-- **Contributors:** James Le Houx (PI, `OpenImpala` / `basecoat` / `SMS` multiphysics engine & design system), Ali Humza Butt ([`BatteryExplorer`](https://github.com/BASE-Laboratory/BatteryExplorer) lazy TIFF/Zarr streaming, Dask slab pooling & 4D operando degradation metrics), Asif Ali ([`PorousDiff`](https://github.com/BASE-Laboratory/PorousDiff) 3D load-conditioned diffusion synthesis)
+- **Contributors:** James Le Houx (PI, `OpenImpala` / `basecoat` / `SMS` multiphysics engine & design system), Ali Humza Butt ([`BatteryExplorer`](https://github.com/BASE-Laboratory/BatteryExplorer) lazy TIFF/Zarr streaming, Dask slab pooling & 4D operando degradation metrics), Asif Ali ([`PorousDiff`](https://github.com/BASE-Laboratory/PorousDiff) 3D load-conditioned diffusion synthesis & Diamond `I12` carbon-felt calibration)
 
 ---
 
-## Key Capabilities (`v0.4.0`)
+## Key Capabilities (`v0.4.1`)
 
 1. **Three Sample Sources Front-and-Centre (`Generate` · `X-ray Scans` · `Upload`)**
-   - **`Generate` (`PorousDiff` & Custom 3D Models):** Stress-conditioned `PorousDiff` carbon felt, custom fibrous felt with catalyst shells, 3-phase battery cathodes (`NMC + binder`), sphere packings, random porous foams, and exact analytical verification cubes — with 1-click `.ome.zarr.zip` volume export.
-   - **`X-ray Scans` (`BatteryExplorer` Out-of-Core 4D Engine):** Thread-safe lazy single-slice streaming (`tifffile` IFD locking + `basecoat` OME-Zarr), multi-threaded `dask.delayed` block-mean 3D slab pooling (`VOLUME_Z_STEP=4`, `VOLUME_XY_STEP=16` preserving thin cracks), radial Hough-circle rim masking (`r/R`), lockstep-Z side-by-side timepoint comparison, synced cycling voltage & 3-row structural traces, and **native `1x1x1` (`step=1`) selected-region physics simulation**.
+   - **`Generate` (`DLS I12 / PorousDiff` & Custom 3D Models):** Boots directly onto real **Diamond Light Source `I12` compressed virgin carbon-felt synchrotron scans (`68`, `238`, `451 kPa`)** alongside `PorousDiff` galleries, real `100³` two-phase porous micro-CT (`SampleData_2Phase_stack_3d_1bit.tif`), custom fibrous felt with catalyst shells, 3-phase battery cathodes (`NMC + binder`), sphere packings, random porous foams, and exact analytical verification cubes — with 1-click `.ome.zarr.zip` volume export.
+   - **`X-ray Scans` (`BatteryExplorer` Out-of-Core 4D Engine + Bundled Synchrotron Data):** Ships with `16.7 MB` of RFC 1950 `zlib` multiscale OME-Zarr v0.4 stores shared zero-copy between Python (`basecoat`) and browser `DecompressionStream('deflate')`:
+     - **Diamond Light Source `I12` In-Situ Virgin Carbon Felt (`68`, `238`, `451 kPa` @ `1.6 µm/px`, `128 × 192 × 192`)**
+     - **Diamond Light Source `I13-2` Zeolite 13X Capillary + `500 µm` Ruby Fiducial (`3.25 µm/px`, `48 × 400 × 400`, Zenodo [`10.5281/zenodo.14245751`](https://doi.org/10.5281/zenodo.14245751), Green et al., *Sci. Data* 12, 329 (2025))**
+     - **Segmented Dendritic / Porous Electrode Micro-CT (`binarised_nlm25`, `2.0 µm/px`, `128 × 256 × 256`)**
+     - Supports full-resolution external `ag_cell` / `cu_cell` operando `.tif` / `.ome.zarr` stacks via `$OPENIMPALA_HUB_OPERANDO_DIR`, thread-safe lazy slice streaming, `dask.delayed` 3D slab pooling, radial Hough-circle rim masking (`r/R`), lockstep-Z comparison, and **native `1x1x1` (`step=1`) selected-region physics simulation**.
    - **`Upload` (Bring Your Own Scan):** UUID-isolated `.tif`, `.ome.zarr.zip`, `.npy`, and `.h5` ingestion with live Otsu/manual threshold preview, anisotropic `(dz, dy, dx)` µm calibration, and solid-mass-conserving virtual Z-compression.
 2. **Coupled Layer-3 Transport (`OpenImpala`) & 3D Mechanics (`SMS`)**
    - Solves 3-axis pathway tortuosity $(\tau_x, \tau_y, \tau_z)$, effective ion diffusivity, solid electrical wiring, $3\times 3$ periodic homogenisation tensors, subvolume REV convergence, 6-connected **Percolating / Dead-End / Trapped** pore partitioning, and optional 3D Young's modulus + von Mises stress fields (`SMS`).

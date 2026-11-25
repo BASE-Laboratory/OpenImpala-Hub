@@ -74,14 +74,22 @@ def _info_popover(text: str, *, flip: bool = False) -> html.Details:
 
 def _generator_options() -> list[dict]:
     gallery = list_porousdiff_gallery()
-    pd_suffix = f" ({len(gallery)} staged)" if gallery else ""
+    pd_label = (
+        f"DLS I12 / PorousDiff · Carbon felt ({len(gallery)} XCT scans)"
+        if gallery
+        else "PorousDiff AI · Carbon felt"
+    )
     return [
         {
-            "label": f"PorousDiff AI · Carbon felt{pd_suffix}",
+            "label": pd_label,
             "value": "porousdiff_gallery",
         },
         {
-            "label": "Custom carbon felt (fibres + coating)",
+            "label": "Real 2-phase porous XCT (OpenImpala 100³)",
+            "value": "two_phase_xct",
+        },
+        {
+            "label": "Custom carbon felt (synthetic fibres + coating)",
             "value": "carbon_felt",
         },
         {
@@ -89,7 +97,7 @@ def _generator_options() -> list[dict]:
             "value": "multiphase_electrode",
         },
         {
-            "label": "Sphere packing",
+            "label": "Sphere packing (synthetic)",
             "value": "overlapping_spheres",
         },
         {
@@ -97,7 +105,7 @@ def _generator_options() -> list[dict]:
             "value": "gaussian_blobs",
         },
         {
-            "label": "Benchmark 8-sphere pack",
+            "label": "Benchmark 8-sphere pack (100³)",
             "value": "benchmark_dataset",
         },
         {
@@ -136,18 +144,23 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
     default_id = registry.default_run_id or (init_history[0]["run_id"] if init_history else None)
 
     operando_map = discover_operando_datasets()
-    default_ds_key = "ag_full" if "ag_full" in operando_map else next(iter(operando_map.keys()))
+    default_ds_key = (
+        "ag_full"
+        if "ag_full" in operando_map
+        else ("dls_i12_felt" if "dls_i12_felt" in operando_map else next(iter(operando_map.keys())))
+    )
     default_ds = operando_map[default_ds_key]
     nz_init, ny_init, nx_init = stack_dimensions(str(default_ds.timepoints[0].path))
 
     tp_marks = {
-        idx: f"{tp.t_h:g}h" for idx, tp in enumerate(default_ds.timepoints)
+        idx: tp.label.split("(")[0].strip()[:12]
+        for idx, tp in enumerate(default_ds.timepoints)
     }
-    default_tp_idx = 1 if len(default_ds.timepoints) > 1 else 0
-    default_z_idx = min(max(0, nz_init - 1), 50)
-    default_roi_x = [max(0, min(86, nx_init - 16)), min(nx_init, 138)]
-    default_roi_y = [max(0, min(54, ny_init - 16)), min(ny_init, 106)]
-    default_roi_z = [max(0, min(38, nz_init - 8)), min(nz_init, 60)]
+    default_tp_idx = min(2, len(default_ds.timepoints) - 1) if default_ds_key == "dls_i12_felt" else (1 if len(default_ds.timepoints) > 1 else 0)
+    default_z_idx = nz_init // 2
+    default_roi_x = [max(0, nx_init // 2 - 48), min(nx_init, nx_init // 2 + 48)]
+    default_roi_y = [max(0, ny_init // 2 - 48), min(ny_init, ny_init // 2 + 48)]
+    default_roi_z = [max(0, nz_init // 2 - 24), min(nz_init, nz_init // 2 + 24)]
 
     chem_options = [
         {"label": c.title, "value": key} for key, c in CHEMISTRIES.items()
@@ -360,12 +373,12 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                                     dcc.Dropdown(
                                                         id="grid-size-dropdown",
                                                         options=[
-                                                            {"label": "32 x 32 x 32", "value": 32},
                                                             {"label": "48 x 48 x 48", "value": 48},
                                                             {"label": "64 x 64 x 64", "value": 64},
                                                             {"label": "80 x 80 x 80", "value": 80},
+                                                            {"label": "96 x 96 x 96", "value": 96},
                                                         ],
-                                                        value=48,
+                                                        value=64,
                                                         clearable=False,
                                                     ),
                                                 ]
@@ -486,7 +499,7 @@ def build_hub_layout(registry: RunRegistry) -> html.Div:
                                             html.Div(
                                                 className="field-header",
                                                 children=[
-                                                    html.Span("Time in cycle"),
+                                                    html.Span("Scan step / load"),
                                                     html.Span(
                                                         default_ds.timepoints[default_tp_idx].label,
                                                         id="operando-time-readout",
