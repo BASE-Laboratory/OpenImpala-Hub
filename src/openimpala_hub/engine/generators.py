@@ -404,23 +404,53 @@ def load_or_generate_microstructure(
 
     if kind == "porousdiff_gallery":
         entries = list_porousdiff_gallery()
-        if not entries:
-            raise FileNotFoundError(
-                "No PorousDiff `.ome.zarr` realisations found in `data/porousdiff/`. "
-                "Export calibrated `.ome.zarr` compression samples from Isambard-AI into "
-                "`data/porousdiff/` (or set $OPENIMPALA_HUB_POROUSDIFF_DIR), or select "
-                "the procedural 'Anisotropic Carbon Felt' source."
+        if entries:
+            chosen = min(
+                entries,
+                key=lambda e: abs(float(e.get("clamping_kpa", 150.0)) - float(spec.clamping_kpa)),
             )
-        chosen = min(
-            entries,
-            key=lambda e: abs(float(e.get("clamping_kpa", 150.0)) - float(spec.clamping_kpa)),
+            p = Path(str(chosen["resolved_path"]))
+            return _load_path_microstructure(
+                p,
+                spec=spec,
+                origin="porousdiff",
+                default_precision="PorousDiff conditional 3D diffusion (.ome.zarr)",
+            )
+        # No .ome.zarr gallery staged yet: run stress-conditioned CPU surrogate with honest provenance
+        strain = (
+            spec.compression_strain
+            if spec.compression_strain >= 0.0
+            else strain_from_clamping_kpa(spec.clamping_kpa)
         )
-        p = Path(str(chosen["resolved_path"]))
-        return _load_path_microstructure(
-            p,
-            spec=spec,
-            origin="porousdiff",
-            default_precision="PorousDiff conditional 3D diffusion (.ome.zarr)",
+        arr = generate_carbon_felt(
+            spec.shape,
+            base_porosity=max(spec.porosity, 0.76),
+            compression_strain=strain,
+            fiber_radius_vox=spec.fiber_radius_vox,
+            in_plane_bias=max(0.06, float(spec.anisotropy_zyx[0]) * 0.40),
+            coating_fraction=spec.coating_fraction,
+            seed=spec.seed + 101,
+        )
+        labels = {0: "pore", 1: "carbon_fiber"}
+        if spec.coating_fraction > 0.0:
+            labels[2] = "active_coating"
+        vol = Volume.from_array(
+            arr,
+            voxel_size_um=spec.voxel_size_um,
+            label_names=labels,
+            provenance={
+                "generator": "porousdiff_cpu_surrogate",
+                "seed": spec.seed,
+                "compression_strain": strain,
+                "clamping_kpa": spec.clamping_kpa,
+                "data_origin": "synthetic",
+            },
+        )
+        return (
+            vol,
+            "synthetic",
+            "PorousDiff stress-conditioned CPU surrogate (stage .ome.zarr in data/porousdiff/ for trained UNet)",
+            arr.shape,
         )
 
     if kind == "user_upload":

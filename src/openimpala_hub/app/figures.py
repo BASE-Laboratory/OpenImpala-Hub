@@ -20,22 +20,24 @@ FieldLayer = Literal["phase", "potential", "flux", "vm_stress"]
 def _theme_tokens(dark_mode: bool) -> dict[str, str]:
     if dark_mode:
         return {
-            "paper_bg": "#111827",
-            "plot_bg": "#1f2937",
-            "fg": "#f3f4f6",
-            "muted": "#9ca3af",
-            "grid": "#374151",
-            "accent": "#38bdf8",
-            "roi": "#2dd4bf",
+            "paper_bg": "rgba(0,0,0,0)",
+            "plot_bg": "#181818",
+            "fg": "#E5DADA",
+            "muted": "#B8BCC1",
+            "grid": "rgba(229, 218, 218, 0.14)",
+            "accent": "#6EA8FE",
+            "roi": "#38bdf8",
+            "cursor": "#FF4D6D",
         }
     return {
-        "paper_bg": "#ffffff",
-        "plot_bg": "#f8fafc",
-        "fg": "#0f172a",
-        "muted": "#475569",
-        "grid": "#e2e8f0",
-        "accent": "#2563eb",
-        "roi": "#0d9488",
+        "paper_bg": "rgba(0,0,0,0)",
+        "plot_bg": "rgba(255, 255, 255, 0.45)",
+        "fg": "#2F3E46",
+        "muted": "#4B5A63",
+        "grid": "rgba(47, 62, 70, 0.16)",
+        "accent": "#0035F5",
+        "roi": "#0035F5",
+        "cursor": "#D90429",
     }
 
 
@@ -944,3 +946,329 @@ def build_electrochem_figure(
     fig.update_xaxes(title_text="Applied C-Rate", row=1, col=2)
     fig.update_yaxes(title_text="Overpotential Loss [mV]", row=1, col=2)
     return fig
+
+
+# ── v0.4.0 Fast PNG Slice Renderer & BatteryExplorer 4D Builders ──────────
+
+
+def render_run_slice_png(
+    run: ExecutedRun,
+    *,
+    plane: SlicePlane = "xz",
+    slice_index: int = 0,
+    layer: FieldLayer = "flux",
+    target_px: int = 640,
+) -> tuple[str, str]:
+    """Render a solved 2D cross-section as a crisp PNG `data:` URI + plain-English caption."""
+    import base64
+    import io
+    import matplotlib
+    from PIL import Image, ImageDraw
+
+    vol = run.phase_volume
+    dz_um, dy_um, dx_um = vol.spacing_in("um")
+    phase_2d, idx = extract_2d_plane(np.asarray(vol.data), plane, slice_index)
+
+    actual = layer
+    if actual == "vm_stress" and run.vm_stress_field is None:
+        actual = "flux" if run.flux_field is not None else "phase"
+    if actual == "flux" and run.flux_field is None:
+        actual = "phase"
+    if actual == "potential" and run.potential_field is None:
+        actual = "phase"
+
+    if actual == "flux" and run.flux_field is not None:
+        f2d, _ = extract_2d_plane(run.flux_field, plane, idx)
+        vmax = max(1.2, float(np.percentile(f2d[np.isfinite(f2d)], 99.0)) if f2d.size else 1.5)
+        norm = np.clip(f2d / vmax, 0.0, 1.0)
+        rgb = (matplotlib.colormaps["magma"](norm)[..., :3] * 255.0).astype(np.uint8)
+        # Render solid backbone & coating in crisp neutral slate so fibres stand out clearly
+        rgb[phase_2d == 1] = (198, 206, 216)
+        rgb[phase_2d == 2] = (138, 152, 170)
+        desc = f"Ion current hotspots (max {vmax:.1f}x average; grey = solid)"
+    elif actual == "potential" and run.potential_field is not None:
+        p2d, _ = extract_2d_plane(run.potential_field, plane, idx)
+        lo, hi = float(np.nanmin(p2d)), float(np.nanmax(p2d))
+        norm = np.clip((p2d - lo) / max(hi - lo, 1e-9), 0.0, 1.0)
+        rgb = (matplotlib.colormaps["coolwarm"](norm)[..., :3] * 255.0).astype(np.uint8)
+        rgb[phase_2d != 0] = (36, 40, 48)
+        desc = "Steady-state voltage / concentration profile across pore space"
+    elif actual == "vm_stress" and run.vm_stress_field is not None:
+        s2d, _ = extract_2d_plane(run.vm_stress_field, plane, idx)
+        smax = max(0.1, float(np.percentile(s2d[s2d > 0], 99.0)) if np.any(s2d > 0) else 1.0)
+        norm = np.clip(s2d / smax, 0.0, 1.0)
+        rgb = (matplotlib.colormaps["inferno"](norm)[..., :3] * 255.0).astype(np.uint8)
+        rgb[phase_2d == 0] = (10, 12, 16)
+        desc = f"Mechanical von Mises stress in solid (99th pct = {smax:.1f} MPa)"
+    else:
+        rgb = np.zeros((*phase_2d.shape, 3), dtype=np.uint8)
+        rgb[phase_2d == 0] = (12, 15, 22)
+        rgb[phase_2d == 1] = (203, 213, 225)
+        rgb[phase_2d == 2] = (56, 189, 248)
+        desc = "Material phases (dark = pore, light grey = solid, blue = coating/binder)"
+
+    # Flip vertically so Z=0 / Y=0 sits cleanly at bottom-left matching Cartesian convention
+    rgb = np.flipud(rgb)
+    im = Image.fromarray(rgb)
+    im = im.resize((target_px, target_px), Image.NEAREST)
+
+    # Overlay top bottleneck ROI #1 if intersecting this slice
+    if run.summary.zoom_rois:
+        roi = run.summary.zoom_rois[0]
+        (z0, z1), (y0, y1), (x0, x1) = roi.bounds_zyx
+        nz, ny, nx = vol.shape
+        hit = False
+        if plane == "xz" and y0 <= idx < y1:
+            hit, c0, c1, r0, r1, nc, nr = True, x0, x1, z0, z1, nx, nz
+        elif plane == "xy" and z0 <= idx < z1:
+            hit, c0, c1, r0, r1, nc, nr = True, x0, x1, y0, y1, nx, ny
+        elif plane == "yz" and x0 <= idx < x1:
+            hit, c0, c1, r0, r1, nc, nr = True, y0, y1, z0, z1, ny, nz
+        if hit:
+            draw = ImageDraw.Draw(im)
+            px0 = int(round(c0 / max(1, nc) * target_px))
+            px1 = int(round(c1 / max(1, nc) * target_px))
+            py0 = int(round((nr - r1) / max(1, nr) * target_px))
+            py1 = int(round((nr - r0) / max(1, nr) * target_px))
+            draw.rectangle([px0, py0, px1, py1], outline=(56, 189, 248), width=2)
+
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    plane_um = (
+        f"{vol.shape[2] * dx_um:.0f} × {vol.shape[0] * dz_um:.0f} µm"
+        if plane == "xz"
+        else f"{vol.shape[2] * dx_um:.0f} × {vol.shape[1] * dy_um:.0f} µm"
+    )
+    caption = f"{run.summary.label} · {plane.upper()} slice {idx + 1} · {desc} ({plane_um})"
+    return f"data:image/png;base64,{b64}", caption
+
+
+def build_compact_discharge_figure(
+    electrochem: dict | None,
+    *,
+    height: int = 235,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Build a clean single-panel 0.5C–4C voltage vs capacity chart for the right-hand column."""
+    tok = _theme_tokens(dark_mode)
+    if not electrochem or not electrochem.get("curves"):
+        return empty_placeholder_figure("No discharge prediction", height=height, dark_mode=dark_mode)
+
+    fig = go.Figure()
+    palette = [tok["fg"], tok["accent"], "#0EA5E9", tok["cursor"]]
+    for idx, c in enumerate(electrochem["curves"]):
+        fig.add_trace(
+            go.Scatter(
+                x=c["capacity_pct_grid"],
+                y=c["voltage_v_grid"],
+                mode="lines",
+                name=f"{c['c_rate']}C",
+                line={"color": palette[idx % len(palette)], "width": 2.2},
+            )
+        )
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 11},
+        margin={"l": 44, "r": 12, "t": 26, "b": 34},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0.0, "font": {"size": 10.5}},
+        xaxis={"title": "Accessible capacity [%]", "range": [0, 102], "gridcolor": tok["grid"]},
+        yaxis={"title": "Voltage [V]", "gridcolor": tok["grid"]},
+    )
+    return fig
+
+
+def build_operando_echem_figure(
+    df: object,
+    t_h: float,
+    *,
+    height: int = 215,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Plot operando cycling voltage (and optional current) with a vertical timepoint cursor."""
+    tok = _theme_tokens(dark_mode)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=df["time_h"],
+            y=df["V"],
+            mode="lines",
+            name="Voltage (V)",
+            line={"color": tok["accent"], "width": 2.0},
+        )
+    )
+    fig.add_vline(x=float(t_h), line_width=2, line_color=tok["cursor"])
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 11},
+        showlegend=False,
+        margin={"l": 46, "r": 12, "t": 12, "b": 34},
+        xaxis={"title": "Cycling time [h]", "gridcolor": tok["grid"]},
+        yaxis={"title": "Voltage [V]", "gridcolor": tok["grid"]},
+    )
+    return fig
+
+
+def build_operando_structural_figure(
+    metrics: dict,
+    t_hours: list[float],
+    t_h: float,
+    *,
+    height: int = 280,
+    dark_mode: bool = False,
+) -> go.Figure:
+    """Build 3-row timepoint-synced degradation traces (ported from Ali's BatteryExplorer)."""
+    tok = _theme_tokens(dark_mode)
+    z_lo, z_hi = metrics["low_atten_band"]
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.14,
+        subplot_titles=(
+            f"Plating-layer brightness (slice z={metrics['interface_z']})",
+            "Outer rim vs centre brightness (static check)",
+            f"Dark void + plated Li in layer (slices {z_lo}–{max(z_lo, z_hi - 1)})",
+        ),
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=t_hours,
+            y=list(metrics["interface_intensity"]),
+            mode="lines+markers",
+            line={"color": tok["accent"], "width": 2.0},
+            name="Interface",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=t_hours,
+            y=list(metrics["rim_ratio"]),
+            mode="lines+markers",
+            line={"color": tok["muted"], "width": 1.8},
+            name="Rim ratio",
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=t_hours,
+            y=[f * 100.0 for f in metrics["low_atten_fraction"]],
+            customdata=list(metrics["low_atten_voxels"]),
+            mode="lines+markers",
+            line={"color": "#0EA5E9", "width": 2.0},
+            name="Void + Li",
+            hovertemplate="%{y:.2f}% (%{customdata:,} voxels)<extra></extra>",
+        ),
+        row=3,
+        col=1,
+    )
+    fig.add_vline(x=float(t_h), line_width=1.8, line_color=tok["cursor"], row="all", col=1)
+    fig.update_annotations(font_size=11)
+    fig.update_layout(
+        height=height,
+        showlegend=False,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 10.5},
+        margin={"l": 46, "r": 12, "t": 22, "b": 30},
+    )
+    fig.update_xaxes(gridcolor=tok["grid"])
+    fig.update_yaxes(gridcolor=tok["grid"])
+    fig.update_xaxes(title_text="Cycling time [h]", row=3, col=1)
+    return fig
+
+
+def build_slice_histogram_figure(
+    hist: np.ndarray,
+    edges: np.ndarray,
+    *,
+    height: int = 165,
+    dark_mode: bool = False,
+    x_range: tuple[float, float] | None = None,
+) -> go.Figure:
+    """Build a compact 64-bin brightness histogram with optional fixed range for Compare."""
+    tok = _theme_tokens(dark_mode)
+    fig = go.Figure(
+        go.Bar(x=edges[:-1], y=hist, marker_color=tok["accent"])
+    )
+    fig.update_layout(
+        height=height,
+        bargap=0.05,
+        paper_bgcolor=tok["paper_bg"],
+        plot_bgcolor=tok["plot_bg"],
+        font={"color": tok["fg"], "size": 10.5},
+        margin={"l": 40, "r": 10, "t": 10, "b": 30},
+        xaxis={"title": "Pixel brightness", "gridcolor": tok["grid"]},
+        yaxis={"title": "Pixels", "gridcolor": tok["grid"]},
+    )
+    if x_range is not None:
+        fig.update_xaxes(range=list(x_range))
+    return fig
+
+
+def build_chunked_mesh3d_figure(
+    vol: dict,
+    *,
+    dark_mode: bool = False,
+    threshold: float = 128.0,
+    opacity: float = 1.0,
+    rim_cutoff: float = 1.0,
+    circle: tuple[float, float, float] | None = None,
+    clip_box: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None,
+    height: int = 560,
+) -> go.Figure:
+    """Render a Dask-pooled X-ray volume dict as a true-scale `go.Mesh3d` isosurface."""
+    from ..engine.chunked_io import extract_isosurface_mesh
+
+    verts, faces = extract_isosurface_mesh(
+        vol,
+        threshold,
+        rim_cutoff=rim_cutoff,
+        circle=circle,
+        clip_box=clip_box,
+    )
+    fig = go.Figure(
+        go.Mesh3d(
+            x=verts[:, 0],
+            y=verts[:, 1],
+            z=verts[:, 2],
+            i=faces[:, 0],
+            j=faces[:, 1],
+            k=faces[:, 2],
+            color="#9fb1c4",
+            opacity=float(opacity),
+            lighting={"ambient": 0.45, "diffuse": 0.8, "specular": 0.2, "roughness": 0.6, "fresnel": 0.1},
+            lightposition={"x": 2000, "y": 2000, "z": 1500},
+            hovertemplate="x=%{x:.0f} px · y=%{y:.0f} px · z=%{z:.0f}<extra></extra>",
+        )
+    )
+    x_rng = [float(vol["x"].min()), float(vol["x"].max())]
+    y_rng = [float(vol["y"].min()), float(vol["y"].max())]
+    z_rng = [float(vol["z"].min()), float(vol["z"].max())]
+    axis_color = "#E5DADA" if dark_mode else "#cbd5e1"
+    fig.update_layout(
+        scene={
+            "xaxis": {"title": "X [px]", "showbackground": False, "color": axis_color, "range": x_rng},
+            "yaxis": {"title": "Y [px]", "showbackground": False, "color": axis_color, "range": y_rng},
+            "zaxis": {"title": "Z [slice]", "showbackground": False, "color": axis_color, "range": z_rng},
+            "aspectmode": "data",
+            "camera": {"eye": {"x": 1.4, "y": 1.4, "z": 0.85}},
+            "bgcolor": "#050608",
+        },
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        height=height,
+        paper_bgcolor="#050608",
+        showlegend=False,
+        font={"color": axis_color},
+    )
+    return fig
+

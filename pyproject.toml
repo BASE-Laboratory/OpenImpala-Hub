@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openimpala-hub"
-version = "0.3.0"
+version = "0.4.0"
 description = "Interactive web platform coupling 3D microstructure synthesis, OpenImpala transport & SMS mechanics solves, cell electrochemistry, volumetric visualisation, and autonomous experiment steering."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -48,6 +48,9 @@ dependencies = [
   "scikit-image>=0.22",
   "matplotlib>=3.8",
   "pillow>=10.0",
+  "dask>=2024.2",
+  "pandas>=2.1",
+  "tifffile>=2023.7",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,69 @@
+{
+  "dataset": "Silver interlayer cell (Ag05 \u00b7 5 timepoints)",
+  "timepoints": [
+    {
+      "store": "t0_0h.ome.zarr",
+      "label": "0h pristine",
+      "time_h": 0.0,
+      "shape_zyx": [
+        32,
+        80,
+        80
+      ],
+      "chunks_zyx": [
+        8,
+        80,
+        80
+      ],
+      "voxel_um": 3.2
+    },
+    {
+      "store": "t1_7p5h.ome.zarr",
+      "label": "7.5h after 1st plating",
+      "time_h": 7.5,
+      "shape_zyx": [
+        32,
+        80,
+        80
+      ],
+      "chunks_zyx": [
+        8,
+        80,
+        80
+      ],
+      "voxel_um": 3.2
+    },
+    {
+      "store": "t2_15h.ome.zarr",
+      "label": "15h after 1st stripping",
+      "time_h": 15.0,
+      "shape_zyx": [
+        32,
+        80,
+        80
+      ],
+      "chunks_zyx": [
+        8,
+        80,
+        80
+      ],
+      "voxel_um": 3.2
+    },
+    {
+      "store": "t3_20h.ome.zarr",
+      "label": "20h after 2nd plating",
+      "time_h": 20.0,
+      "shape_zyx": [
+        32,
+        80,
+        80
+      ],
+      "chunks_zyx": [
+        8,
+        80,
+        80
+      ],
+      "voxel_um": 3.2
+    }
+  ]
+}

@@ -142,6 +142,7 @@ def _register_api_routes(server: Flask, registry: RunRegistry) -> None:
             if env_cap > 0 and mspec.source_kind in (
                 "open_cube",
                 "carbon_felt",
+                "porousdiff_gallery",
                 "gaussian_blobs",
                 "overlapping_spheres",
                 "multiphase_electrode",
