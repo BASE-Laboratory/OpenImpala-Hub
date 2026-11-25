@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+title: "The OpenImpala Hub: Interactive Microstructure Synthesis, Transport Simulation, and Autonomous Experiment Steering"
+message: "If you use OpenImpala-Hub in your research or teaching, please cite this software alongside OpenImpala."
+type: software
+version: 0.1.0
+date-released: "2026-11-25"
+license: BSD-3-Clause
+repository-code: "https://github.com/BASE-Laboratory/OpenImpala-Hub"
+url: "https://github.com/BASE-Laboratory/OpenImpala-Hub"
+authors:
+  - given-names: James
+    family-names: Le Houx
+    email: j.lehoux@greenwich.ac.uk
+    affiliation: "University of Greenwich; ISIS Neutron and Muon Source, STFC; The Faraday Institution"
+    orcid: "https://orcid.org/0000-0002-1576-0673"
+  - given-names: Ali Humza
+    family-names: Butt
+    affiliation: "University of Greenwich"
+  - given-names: Asif
+    family-names: Ali
+    affiliation: "University of Greenwich"
+keywords:
+  - porous-media
+  - battery-modelling
+  - tortuosity
+  - generative-ai
+  - x-ray-tomography
+  - digital-twin
+  - openimpala
+references:
+  - type: article
+    title: "OpenImpala: OPEN source IMage based PArallelisable Linear Algebra solver"
+    authors:
+      - given-names: James
+        family-names: Le Houx
+      - given-names: Denis
+        family-names: Kramer
+    journal: "SoftwareX"
+    volume: 15
+    pages: "100729"
+    year: 2021
+    doi: "10.1016/j.softx.2021.100729"

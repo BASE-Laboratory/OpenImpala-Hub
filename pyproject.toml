@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openimpala-hub"
+version = "0.1.0"
+description = "Interactive web platform coupling 3D microstructure synthesis, OpenImpala transport physics solves, volumetric visualisation, and autonomous experiment steering."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+  { name = "James Le Houx", email = "j.lehoux@greenwich.ac.uk" },
+  { name = "Ali Humza Butt" },
+  { name = "Asif Ali" },
+]
+maintainers = [
+  { name = "James Le Houx", email = "j.lehoux@greenwich.ac.uk" },
+]
+keywords = [
+  "porous-media",
+  "battery-modelling",
+  "tortuosity",
+  "effective-diffusivity",
+  "tomography",
+  "digital-twin",
+  "openimpala",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Education",
+  "License :: OSI Approved :: BSD License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  # Swap to "basecoat>=0.3.0,<0.4.0" once PyPI Trusted Publisher is enabled on BASE-Laboratory/basecoat
+  "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.3.0",
+  "openimpala>=5.0,<6.0",
+  "dash>=2.17,<4.0",
+  "plotly>=5.22,<7.0",
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "scikit-image>=0.22",
+  "matplotlib>=3.8",
+  "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+mpi = [
+  "openimpala[openmpi]>=5.0,<6.0",
+]
+server = [
+  "gunicorn>=22.0",
+]
+modal = [
+  "modal>=0.64",
+]
+dev = [
+  "pytest>=8.0",
+  "gunicorn>=22.0",
+  "playwright>=1.46",
+]
+
+[project.scripts]
+openimpala-hub = "openimpala_hub.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/BASE-Laboratory/OpenImpala-Hub"
+Repository = "https://github.com/BASE-Laboratory/OpenImpala-Hub"
+Documentation = "https://base-laboratory.github.io/OpenImpala/"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openimpala_hub"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.basecoat.layers]
+layer = 4
+source_dirs = ["src"]
+banned_imports = ["zarr", "numcodecs"]

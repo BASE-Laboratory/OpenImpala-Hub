@@ -1,0 +1,20 @@
+services:
+  openimpala-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openimpala-hub:local
+    ports:
+      - "${PORT:-7860}:7860"
+    environment:
+      - HUB_MAX_SOLVE_SIDE=${HUB_MAX_SOLVE_SIDE:-128}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+    volumes:
+      - ./data/porousdiff:/app/data/porousdiff:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7860/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
