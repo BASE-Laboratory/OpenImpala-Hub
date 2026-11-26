@@ -52,7 +52,9 @@ def has_sms_backend() -> bool:
     """Return True if compiled `sms` (`structural_mechanics_solver`) is importable."""
     try:
         import sms  # type: ignore[import-not-found]
+        from sms._core import _load_library  # type: ignore[import-not-found]
 
+        _load_library()
         return hasattr(sms, "effective_modulus")
     except Exception:
         return False

@@ -144,7 +144,7 @@ def run_transport_pipeline(
         vf_cond = oi.volume_fraction(data_arg, phase=s_spec.conducting_phase)
         porosity = float(vf_cond.fraction)
 
-        # Cauchy-Crofton Specific Surface Area (safe even on single-phase or solid-conducting runs)
+        # Cauchy-Crofton Specific Surface Area (total and percolation-filtered active SSA)
         counter_phases = [p for p in unique_phases if p != s_spec.conducting_phase]
         if counter_phases:
             primary_other = next(
@@ -157,8 +157,17 @@ def run_transport_pipeline(
                 phase_b=primary_other,
                 **vox_kw,
             )
+            ssa_act_res = oi.specific_surface_area(
+                data_arg,
+                phase_a=s_spec.conducting_phase,
+                phase_b=primary_other,
+                active_only=True,
+                direction=s_spec.field_direction,
+                active_phase=s_spec.conducting_phase,
+                **vox_kw,
+            )
             ssa_total = float(ssa_res.ssa_corrected)
-            active_ssa = ssa_total
+            active_ssa = float(ssa_act_res.ssa_corrected)
             if (
                 2 in counter_phases
                 and primary_other != 2
@@ -170,9 +179,18 @@ def run_transport_pipeline(
                     phase_b=2,
                     **vox_kw,
                 )
+                ssa_coat_act = oi.specific_surface_area(
+                    data_arg,
+                    phase_a=s_spec.conducting_phase,
+                    phase_b=2,
+                    active_only=True,
+                    direction=s_spec.field_direction,
+                    active_phase=s_spec.conducting_phase,
+                    **vox_kw,
+                )
                 ssa_total += float(ssa_coat.ssa_corrected)
-                # Active electrochemical interface weights catalyst/CBD coating plus exposed carbon surface
-                active_ssa = float(ssa_coat.ssa_corrected) + 0.35 * float(ssa_res.ssa_corrected)
+                # Active electrochemical interface weights percolating catalyst/CBD coating plus exposed carbon surface
+                active_ssa = float(ssa_coat_act.ssa_corrected) + 0.35 * float(ssa_act_res.ssa_corrected)
         else:
             ssa_total = 0.0
             active_ssa = 0.0
@@ -190,6 +208,7 @@ def run_transport_pipeline(
         # Directional transport solves (single-phase or composite multiphase)
         directional: dict[str, AxisTransportSummary] = {}
         potential_field: np.ndarray | None = None
+        native_flux_mag_si: np.ndarray | None = None
 
         for d in s_spec.directions:
             want_field = bool(s_spec.return_fields and d == s_spec.field_direction)
@@ -201,6 +220,7 @@ def run_transport_pipeline(
                     direction=d,
                     solver=solver_name,
                     return_field=want_field,
+                    return_flux=want_field,
                     **vox_kw,
                 )
                 perc_flag = bool(tres.effective_diffusivity and tres.effective_diffusivity > 1e-12)
@@ -220,6 +240,7 @@ def run_transport_pipeline(
                         direction=d,
                         solver=solver_name,
                         return_field=want_field,
+                        return_flux=want_field,
                         **vox_kw,
                     )
                 else:
@@ -228,6 +249,8 @@ def run_transport_pipeline(
             if tres is not None:
                 if want_field and tres.solution_field is not None:
                     potential_field = np.asarray(tres.solution_field, dtype=np.float32)
+                if want_field and tres.flux_magnitude is not None:
+                    native_flux_mag_si = np.asarray(tres.flux_magnitude, dtype=np.float64)
                 deff_val = (
                     float(tres.effective_diffusivity)
                     if tres.effective_diffusivity is not None
@@ -332,7 +355,7 @@ def run_transport_pipeline(
                     sizes=raw_sizes,
                     phase=s_spec.conducting_phase,
                     num_samples=3,
-                    solver="hypre" if solver_name == "hypre" else "flexgmres",
+                    solver="hypre" if solver_name == "hypre" else "auto",
                     **vox_kw,
                 )
                 ax_diag_idx = {"x": 0, "y": 1, "z": 2}[s_spec.field_direction]
@@ -444,10 +467,17 @@ def run_transport_pipeline(
 
     solve_time_s = time.perf_counter() - t_solve_start
 
-    # Compute 3D dimensionless diffusive flux & spatial zoom-ROI recommendations
+    flow_axis_idx = {"z": 0, "y": 1, "x": 2}[s_spec.field_direction]
+    flow_sp_m = (dz_m, dy_m, dx_m)[flow_axis_idx]
+    thickness_m = float(capped_vol.shape[flow_axis_idx]) * float(flow_sp_m)
+
+    # Compute 3D dimensionless diffusive flux (preferring native OpenImpala v5.2 flux_magnitude)
+    # & spatial zoom-ROI recommendations
     flux_field: np.ndarray | None = None
     zoom_rois = []
-    if potential_field is not None:
+    if native_flux_mag_si is not None:
+        flux_field = (native_flux_mag_si * thickness_m).astype(np.float32)
+    elif potential_field is not None:
         flux_field = compute_diffusive_flux_field(
             capped_vol,
             potential_field,
@@ -455,6 +485,7 @@ def run_transport_pipeline(
             conducting_phase=s_spec.conducting_phase,
             phase_diffusivities=s_spec.phase_diffusivities,
         )
+    if flux_field is not None:
         roi_w = max(8, min(20, min(capped_vol.shape) // 4))
         zoom_rois = find_flux_bottleneck_rois(
             capped_vol,
@@ -489,10 +520,6 @@ def run_transport_pipeline(
         w_elec=w_elec,
         w_kin=w_kin,
     )
-
-    flow_axis_idx = {"z": 0, "y": 1, "x": 2}[s_spec.field_direction]
-    flow_sp_m = (dz_m, dy_m, dx_m)[flow_axis_idx]
-    thickness_m = float(capped_vol.shape[flow_axis_idx]) * float(flow_sp_m)
     echem_rep = evaluate_cell_electrochemistry(
         porosity=porosity,
         d_eff_z=d_eff_z,
