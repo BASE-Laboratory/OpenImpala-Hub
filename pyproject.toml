@@ -40,7 +40,7 @@ classifiers = [
 dependencies = [
   # Swap to "basecoat>=0.3.0,<0.4.0" once PyPI Trusted Publisher is enabled on BASE-Laboratory/basecoat
   "basecoat @ git+https://github.com/BASE-Laboratory/basecoat.git@v0.3.0",
-  "openimpala>=5.0,<6.0",
+  "openimpala>=5.2.0,<6.0",
   "dash>=2.17,<4.0",
   "plotly>=5.22,<7.0",
   "numpy>=1.26",
@@ -55,7 +55,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mpi = [
-  "openimpala[openmpi]>=5.0,<6.0",
+  "openimpala[openmpi]>=5.2.0,<6.0",
 ]
 sms = [
   "sms @ git+https://github.com/BASE-Laboratory/structural_mechanics_solver.git",

@@ -1,11 +1,9 @@
-"""Boundary adapter between `basecoat v0.3` and `openimpala >= 5.0, < 6.0`.
+"""Boundary adapter between `basecoat v0.3` and `openimpala >= 5.2.0, < 6.0`.
 
 Responsibilities:
 1. Enforce physical unit calibration: convert `basecoat.Volume` spacing to SI metres
-   via `vol.spacing_in("m")`, raising `openimpala.UnitCalibrationError` (on `v5.1+`)
-   or a compatible calibration exception (on `v5.0.x`) when `unit='voxel'`.
-2. Pass `basecoat.Volume` directly when `openimpala >= 5.1` supports `VolumeProtocol`,
-   and transparently unpack `(arr, voxel_size_m)` on `openimpala == 5.0.x`.
+   via `vol.spacing_in("m")`, raising `openimpala.UnitCalibrationError` when `unit='voxel'`.
+2. Pass calibrated `basecoat.Volume` containers directly via `openimpala.VolumeProtocol`.
 3. Enforce the public web grid-size cap (`HUB_MAX_SOLVE_SIDE`, default `128`) using
    either centre ROI cropping or discrete majority-mode coarsening while keeping
    `AxisSpec` cell-centre coordinates exact (`coarsen_axes`).
@@ -20,16 +18,7 @@ import numpy as np
 from basecoat import AxisSpec, UnitConversionError, Volume, VolumeSet, coarsen_axes
 import openimpala as oi
 
-# Resolve UnitCalibrationError across openimpala v5.1+ and v5.0.x
-if hasattr(oi, "UnitCalibrationError"):
-    HubUnitCalibrationError = oi.UnitCalibrationError
-else:
-
-    class HubUnitCalibrationError(ValueError):  # type: ignore[no-redef]
-        """Raised when an uncalibrated (`unit='voxel'`) volume reaches a physics solver."""
-
-
-_SUPPORTS_VOLUME_PROTOCOL = hasattr(oi, "VolumeProtocol")
+HubUnitCalibrationError = oi.UnitCalibrationError
 
 
 def default_max_solve_side() -> int:
@@ -89,13 +78,10 @@ def resolve_voxel_size_metres(vol: Volume) -> tuple[float, float, float]:
 
 def solver_input_for_openimpala(
     vol: Volume,
-) -> tuple[object, dict[str, object]]:
-    """Prepare `(data_arg, voxel_kwargs)` compatible with both `openimpala 5.0` and `5.1+`."""
-    dz_m, dy_m, dx_m = resolve_voxel_size_metres(vol)
-    if _SUPPORTS_VOLUME_PROTOCOL:
-        return vol, {}
-    arr = np.ascontiguousarray(vol.data, dtype=np.int32)
-    return arr, {"voxel_size": (dz_m, dy_m, dx_m)}
+) -> tuple[Volume, dict[str, object]]:
+    """Validate calibration and return `(vol, {})` for `OpenImpala` `VolumeProtocol`."""
+    resolve_voxel_size_metres(vol)
+    return vol, {}
 
 
 def _downsample_majority_2x_step(

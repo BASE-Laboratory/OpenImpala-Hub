@@ -98,3 +98,31 @@ def test_cpp_and_scipy_solver_parity() -> None:
         r_py.summary.directional["z"].tortuosity, rel=1e-3
     )
 
+
+def test_v52_active_ssa_and_native_flux_pocket_zeroing() -> None:
+    """OpenImpala v5.2 native active_only SSA and return_flux must exclude isolated pockets."""
+    arr = np.ones((16, 16, 16), dtype=np.int32)
+    # Z-spanning pore channel (phase 0) + isolated 2^3 pore pocket
+    arr[:, 2:6, 2:6] = 0
+    arr[10:12, 10:12, 10:12] = 0
+    vol = Volume.from_array(arr, voxel_size_um=1.0)
+
+    run = run_transport_pipeline(
+        MicrostructureSpec(source_kind="open_cube", shape=(16, 16, 16), voxel_size_um=(1.0, 1.0, 1.0)),
+        SolveSpec(
+            directions=("z",),
+            conducting_phase=0,
+            solid_phases=(1,),
+            field_direction="z",
+            solver="mlmg",
+            return_fields=True,
+            compute_solid_wiring=False,
+        ),
+        existing_volume=vol,
+    )
+    assert run.summary.interfacial_area_active_m_inv < run.summary.specific_surface_area_m_inv
+    assert run.flux_field is not None
+    assert np.all(run.flux_field[10:12, 10:12, 10:12] == 0.0)
+    assert np.allclose(run.flux_field[:, 2:6, 2:6], 1.0, atol=1e-3)
+
+
